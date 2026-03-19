@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Play, Square, Package, ArrowRight, Settings, Wifi, WifiOff,
+  Play, Square, Package, ArrowRight, Wifi, WifiOff,
   AlertCircle, Hand, Activity, Gauge, Radio, MonitorSpeaker, X, Loader
 } from 'lucide-react';
 
 // ─── CONSTANTES PLC ────────────────────────────────────────────────────────
 
-const MAX_CAPACITY     = 10;
-const SCAN_RATE_MS     = 40;          // 25 Hz
-const TRAVEL_TIME_S    = 5;
+const MAX_CAPACITY       = 10;
+const SCAN_RATE_MS       = 40;       // 25 Hz — cycle scan navigateur
+const TRAVEL_TIME_S      = 5;
 const POSITION_INCREMENT = 100 / (TRAVEL_TIME_S * 1000 / SCAN_RATE_MS);
 
-// URL WebSocket backend (fonctionne en dev local ET sur RPi)
+// URL WebSocket backend — fonctionne en dev local ET sur RPi
 const WS_URL = `ws://${window.location.hostname}:3001`;
 
 // ─── COMPOSANT PRINCIPAL ───────────────────────────────────────────────────
@@ -20,26 +20,25 @@ const App = () => {
 
   // --- MODE ---
   const [isSimulationMode, setIsSimulationMode] = useState(true);
-  const [showIpModal, setShowIpModal]           = useState(false);
-  const [espIpInput, setEspIpInput]             = useState('192.168.4.1');
+  const [showIpModal,      setShowIpModal]       = useState(false);
+  const [espIpInput,       setEspIpInput]        = useState('192.168.4.1');
 
-  // --- ÉTAT SYSTÈME (registres Modbus) ---
-  const [motorActive,        setMotorActive]        = useState(false);
-  const [cansOnConveyor,     setCansOnConveyor]      = useState([]);
-  const [totalCounter,       setTotalCounter]        = useState(0);
-  const [entrySensorActive,  setEntrySensorActive]   = useState(false);
-  const [exitSensorActive,   setExitSensorActive]    = useState(false);
+  // --- ÉTAT SYSTÈME (miroir des registres Modbus ESP32) ---
+  const [motorActive,       setMotorActive]       = useState(false);
+  const [cansOnConveyor,    setCansOnConveyor]     = useState([]);
+  const [totalCounter,      setTotalCounter]       = useState(0);
+  const [entrySensorActive, setEntrySensorActive]  = useState(false);
+  const [exitSensorActive,  setExitSensorActive]   = useState(false);
 
   // --- ÉTAT CONNEXION (Mode Réel) ---
-  const [wsReady,        setWsReady]        = useState(false);
   const [modbusConnected, setModbusConnected] = useState(false);
-  const [connectedIp,    setConnectedIp]    = useState(null);
-  const [connecting,     setConnecting]     = useState(false);
+  const [connectedIp,     setConnectedIp]     = useState(null);
+  const [connecting,      setConnecting]      = useState(false);
   const [connectionError, setConnectionError] = useState(null);
 
   const wsRef = useRef(null);
 
-  // ─── LOGIQUE PLC SIMULATION ──────────────────────────────────────────────
+  // ─── LOGIQUE PLC SIMULATION (navigateur) ────────────────────────────────
 
   useEffect(() => {
     if (!isSimulationMode) return;
@@ -66,15 +65,14 @@ const App = () => {
     return () => clearInterval(interval);
   }, [isSimulationMode]);
 
-  // ─── WEBSOCKET (Mode Réel) ───────────────────────────────────────────────
+  // ─── WEBSOCKET (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
 
   const closeWS = useCallback(() => {
     if (wsRef.current) {
-      wsRef.current.onclose = null; // éviter callback récursif
+      wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
-    setWsReady(false);
     setModbusConnected(false);
     setConnectedIp(null);
   }, []);
@@ -92,10 +90,7 @@ const App = () => {
 
     wsRef.current = ws;
 
-    ws.onopen = () => {
-      setWsReady(true);
-      setConnectionError(null);
-    };
+    ws.onopen = () => setConnectionError(null);
 
     ws.onmessage = (event) => {
       let msg;
@@ -112,27 +107,19 @@ const App = () => {
         setConnectedIp(s.espIp);
         if (connecting && s.connected) setConnecting(false);
       }
-
       if (msg.type === 'connect_result') {
         setConnecting(false);
-        if (!msg.success) {
-          setConnectionError(`Échec Modbus : ${msg.error}`);
-        }
+        if (!msg.success) setConnectionError(`Échec Modbus : ${msg.error}`);
       }
-
       if (msg.type === 'error') {
         setConnectionError(msg.message);
       }
     };
 
-    ws.onclose = () => {
-      setWsReady(false);
-      setModbusConnected(false);
-    };
+    ws.onclose = () => setModbusConnected(false);
 
     ws.onerror = () => {
       setConnectionError('Serveur backend inaccessible. Lancez : npm run server');
-      setWsReady(false);
     };
 
     return () => {
@@ -141,7 +128,7 @@ const App = () => {
     };
   }, [isSimulationMode]);
 
-  // ─── ACTIONS OPÉRATEUR ───────────────────────────────────────────────────
+  // ─── ACTIONS OPÉRATEUR HMI ───────────────────────────────────────────────
 
   const addCan = () => {
     if (isSimulationMode) {
@@ -149,11 +136,7 @@ const App = () => {
       setEntrySensorActive(true);
       setCansOnConveyor(prev => [
         ...prev,
-        {
-          id:       Math.random(),
-          position: 0,
-          label:    `CAN-${Math.floor(Math.random() * 900) + 100}`,
-        },
+        { id: Math.random(), position: 0, label: `CAN-${Math.floor(Math.random() * 900) + 100}` },
       ]);
       setTimeout(() => setEntrySensorActive(false), 300);
     } else {
@@ -177,16 +160,14 @@ const App = () => {
     }
   };
 
-  // ─── GESTION MODE ────────────────────────────────────────────────────────
+  // ─── GESTION BASCULE MODE ────────────────────────────────────────────────
 
   const switchToSimulation = () => {
-    // Envoyer ordre déconnexion Modbus au backend
     wsRef.current?.send(JSON.stringify({ type: 'disconnect' }));
     closeWS();
     setIsSimulationMode(true);
     setConnectionError(null);
     setConnecting(false);
-    // Réinitialiser l'état convoyeur
     setMotorActive(false);
     setCansOnConveyor([]);
     setEntrySensorActive(false);
@@ -203,10 +184,8 @@ const App = () => {
     setShowIpModal(false);
     setConnecting(true);
     setConnectionError(null);
-    // Passer en mode réel → le useEffect WebSocket va se lancer
     setIsSimulationMode(false);
-    // Le ws.onopen enverra la commande connect après connexion WS
-    // On envoie via un léger délai pour laisser le WS s'ouvrir
+    // Délai pour laisser le useEffect WebSocket s'ouvrir avant d'envoyer la commande
     setTimeout(() => {
       wsRef.current?.send(JSON.stringify({ type: 'connect', ip: espIpInput.trim() }));
     }, 500);
@@ -219,7 +198,7 @@ const App = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
 
-      {/* MODAL SAISIE IP */}
+      {/* MODAL SAISIE IP ESP32 */}
       {showIpModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-700 rounded-3xl p-8 w-full max-w-sm shadow-2xl">
@@ -230,17 +209,12 @@ const App = () => {
                 </div>
                 <h3 className="font-bold text-white">Connexion ESP32</h3>
               </div>
-              <button
-                onClick={() => setShowIpModal(false)}
-                className="text-slate-500 hover:text-white transition-colors"
-              >
+              <button onClick={() => setShowIpModal(false)} className="text-slate-500 hover:text-white transition-colors">
                 <X size={20} />
               </button>
             </div>
 
-            <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">
-              Adresse IP de l'ESP32
-            </label>
+            <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Adresse IP de l'ESP32</label>
             <input
               type="text"
               value={espIpInput}
@@ -251,20 +225,14 @@ const App = () => {
               autoFocus
             />
             <p className="text-[10px] text-slate-600 mb-6">
-              Port Modbus TCP : 502 — ID esclave : 1
+              Port Modbus TCP : 502 — ID esclave : 1 — Holding Registers
             </p>
 
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowIpModal(false)}
-                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium transition-colors"
-              >
+              <button onClick={() => setShowIpModal(false)} className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium transition-colors">
                 Annuler
               </button>
-              <button
-                onClick={confirmConnect}
-                className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold transition-colors"
-              >
+              <button onClick={confirmConnect} className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold transition-colors">
                 Connecter
               </button>
             </div>
@@ -279,19 +247,15 @@ const App = () => {
             <Activity size={24} className="text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-white uppercase">
-              Système Convoyeur Synchrone
-            </h1>
+            <h1 className="text-2xl font-black tracking-tight text-white uppercase">Système Convoyeur Synchrone</h1>
             <p className="text-slate-500 text-xs font-mono uppercase tracking-widest">
-              Digital Twin : ESP32 / Modbus TCP
+              Digital Twin : ESP32 WROOM / Modbus TCP
             </p>
           </div>
         </div>
 
-        {/* ZONE MODE */}
+        {/* ZONE MODE + STATUT */}
         <div className="flex items-center gap-3">
-
-          {/* Badge statut connexion */}
           <div className={`px-4 py-2 rounded-xl text-[10px] font-bold flex items-center gap-2 border transition-all ${
             isSimulationMode
               ? 'bg-amber-500/10 border-amber-500/30 text-amber-500'
@@ -312,22 +276,19 @@ const App = () => {
             )}
           </div>
 
-          {/* Bouton bascule */}
           {isSimulationMode ? (
             <button
               onClick={openIpModal}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all active:scale-95"
             >
-              <Radio size={13} />
-              Mode Réel
+              <Radio size={13} /> Mode Réel
             </button>
           ) : (
             <button
               onClick={switchToSimulation}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold transition-all active:scale-95"
             >
-              <MonitorSpeaker size={13} />
-              Mode Simulation
+              <MonitorSpeaker size={13} /> Mode Simulation
             </button>
           )}
         </div>
@@ -364,37 +325,28 @@ const App = () => {
             </h2>
 
             <div className="space-y-6">
+              {/* Moteur */}
               <div className="flex flex-col gap-2">
-                <span className="text-xs text-slate-400">État Moteur (Q0.0)</span>
+                <span className="text-xs text-slate-400">État Moteur (HR0 / Q0.0)</span>
                 <div className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
                   motorActive
                     ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
                     : 'bg-slate-800 border-slate-700 text-slate-500'
                 }`}>
                   <span className="text-sm font-bold font-mono">{motorActive ? 'RUNNING' : 'IDLE'}</span>
-                  {motorActive
-                    ? <Play size={18} fill="currentColor" />
-                    : <Square size={18} fill="currentColor" />
-                  }
+                  {motorActive ? <Play size={18} fill="currentColor" /> : <Square size={18} fill="currentColor" />}
                 </div>
               </div>
 
+              {/* Capteurs */}
               <div className="grid grid-cols-1 gap-4">
                 <div className="flex items-center justify-between p-3 bg-slate-800/50 rounded-2xl border border-slate-700/50">
-                  <span className="text-xs">Capteur Entrée (I0.0)</span>
-                  <div className={`w-3 h-3 rounded-full transition-all ${
-                    entrySensorActive
-                      ? 'bg-blue-400 shadow-[0_0_12px_rgba(96,165,250,0.6)]'
-                      : 'bg-slate-600'
-                  }`}></div>
+                  <span className="text-xs">Capteur Entrée (HR1 / I0.0)</span>
+                  <div className={`w-3 h-3 rounded-full transition-all ${entrySensorActive ? 'bg-blue-400 shadow-[0_0_12px_rgba(96,165,250,0.6)]' : 'bg-slate-600'}`}></div>
                 </div>
                 <div className="flex items-center justify-between p-3 bg-slate-800/50 rounded-2xl border border-slate-700/50">
-                  <span className="text-xs">Capteur Sortie (I0.1)</span>
-                  <div className={`w-3 h-3 rounded-full transition-all ${
-                    exitSensorActive
-                      ? 'bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.6)]'
-                      : 'bg-slate-600'
-                  }`}></div>
+                  <span className="text-xs">Capteur Sortie (HR2 / I0.1)</span>
+                  <div className={`w-3 h-3 rounded-full transition-all ${exitSensorActive ? 'bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.6)]' : 'bg-slate-600'}`}></div>
                 </div>
               </div>
 
@@ -404,16 +356,15 @@ const App = () => {
                   ? 'text-amber-500 border-amber-500/20 bg-amber-500/5'
                   : 'text-emerald-400 border-emerald-500/20 bg-emerald-500/5'
               }`}>
-                <div className={`w-1.5 h-1.5 rounded-full ${
-                  isSimulationMode ? 'bg-amber-500' : 'bg-emerald-400 animate-pulse'
-                }`}></div>
-                {isSimulationMode ? 'Source : Simulation locale' : `Source : ESP32 Modbus TCP`}
+                <div className={`w-1.5 h-1.5 rounded-full ${isSimulationMode ? 'bg-amber-500' : 'bg-emerald-400 animate-pulse'}`}></div>
+                {isSimulationMode ? 'Source : Simulation locale' : 'Source : ESP32 Modbus TCP'}
               </div>
             </div>
           </section>
 
+          {/* Compteurs */}
           <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
-            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Stockage Registres</h2>
+            <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Registres HR3 / HR4</h2>
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
                 <div className="text-2xl font-mono text-cyan-400 font-bold">{cansOnConveyor.length}</div>
@@ -427,7 +378,7 @@ const App = () => {
           </section>
         </div>
 
-        {/* VUE PROCESSUS ET CONTRÔLE */}
+        {/* VUE PROCESSUS + COMMANDES */}
         <div className="lg:col-span-3 space-y-6">
           <div className="bg-slate-900 rounded-3xl p-8 border border-slate-800 shadow-2xl relative overflow-hidden min-h-[400px] flex flex-col justify-center">
             <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:20px_20px]"></div>
@@ -436,7 +387,6 @@ const App = () => {
 
             {/* CONVOYEUR */}
             <div className="relative h-28 bg-slate-950 rounded-3xl border-4 border-slate-800 flex items-center px-4 shadow-inner">
-
               {/* Animation tapis */}
               <div
                 className="absolute inset-0 opacity-10 pointer-events-none"
@@ -464,20 +414,18 @@ const App = () => {
                       <div className={`w-6 h-1 mt-2 rounded-full ${can.position >= 100 ? 'bg-white/40' : 'bg-slate-500/30'}`}></div>
                     </div>
                     <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-slate-800 px-2 py-1 rounded text-[9px] font-mono whitespace-nowrap border border-slate-700">
-                      Pos: {can.position.toFixed(1)}%
+                      {isSimulationMode ? `Pos: ${can.position.toFixed(1)}%` : `HR${5 + can.id}`}
                     </div>
                   </div>
                 </div>
               ))}
 
               {cansOnConveyor.length === 0 && (
-                <div className="w-full text-center text-slate-700 font-mono text-sm tracking-[0.3em] uppercase">
-                  Attente Alimentation
-                </div>
+                <div className="w-full text-center text-slate-700 font-mono text-sm tracking-[0.3em] uppercase">Attente Alimentation</div>
               )}
             </div>
 
-            {/* Légende positions */}
+            {/* Légende */}
             <div className="flex justify-between mt-8 px-6">
               <div className="flex flex-col items-center gap-2">
                 <div className={`h-1.5 w-12 rounded-full transition-colors ${entrySensorActive ? 'bg-blue-500 shadow-[0_0_10px_#3b82f6]' : 'bg-slate-800'}`}></div>
@@ -491,7 +439,7 @@ const App = () => {
 
             {/* Alerte blocage */}
             {isAtFullStop && (
-              <div className="absolute top-8 right-8 animate-in fade-in slide-in-from-right-4">
+              <div className="absolute top-8 right-8">
                 <div className="flex items-center gap-3 bg-rose-500/10 border border-rose-500/50 p-4 rounded-2xl text-rose-500 shadow-xl backdrop-blur-md">
                   <AlertCircle size={20} className="animate-bounce" />
                   <div>
@@ -507,38 +455,26 @@ const App = () => {
           <div className="bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-              {/* Ajouter canette */}
               <button
                 onClick={addCan}
-                disabled={
-                  isSimulationMode
-                    ? cansOnConveyor.length >= MAX_CAPACITY
-                    : !modbusConnected
-                }
+                disabled={isSimulationMode ? cansOnConveyor.length >= MAX_CAPACITY : !modbusConnected}
                 className="group relative flex items-center justify-between bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 disabled:cursor-not-allowed disabled:text-slate-600 p-5 rounded-2xl transition-all active:scale-[0.98] overflow-hidden"
               >
                 <div className="flex items-center gap-4 z-10">
-                  <div className="bg-white/10 p-2 rounded-xl">
-                    <Package size={24} />
-                  </div>
+                  <div className="bg-white/10 p-2 rounded-xl"><Package size={24} /></div>
                   <div className="text-left">
                     <span className="block text-sm font-bold">AJOUTER</span>
                     <span className="text-[10px] opacity-70 font-normal uppercase tracking-wide">
-                      {isSimulationMode ? 'Alimentation Capteur' : 'Pulse Coil 0 → ESP32'}
+                      {isSimulationMode ? 'Simulation locale' : 'Pulse Coil C0 → ESP32'}
                     </span>
                   </div>
                 </div>
                 <ArrowRight size={20} className="opacity-40 group-hover:translate-x-1 transition-transform" />
               </button>
 
-              {/* Récupérer canette */}
               <button
                 onClick={retrieveCan}
-                disabled={
-                  isSimulationMode
-                    ? !exitSensorActive
-                    : !modbusConnected
-                }
+                disabled={isSimulationMode ? !exitSensorActive : !modbusConnected}
                 className={`group relative flex items-center justify-between p-5 rounded-2xl transition-all active:scale-[0.98] overflow-hidden ${
                   (isSimulationMode ? exitSensorActive : modbusConnected)
                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/20'
@@ -552,7 +488,7 @@ const App = () => {
                   <div className="text-left">
                     <span className="block text-sm font-bold uppercase tracking-tight">Récupérer / Acquitter</span>
                     <span className="text-[10px] opacity-70 font-normal uppercase tracking-wide">
-                      {isSimulationMode ? 'Libérer le moteur' : 'Pulse Coil 1 → ESP32'}
+                      {isSimulationMode ? 'Libérer le moteur' : 'Pulse Coil C1 → ESP32'}
                     </span>
                   </div>
                 </div>
@@ -567,7 +503,7 @@ const App = () => {
               <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">
                 {isSimulationMode
                   ? 'Mode Simulation — Logique PLC exécutée localement dans le navigateur'
-                  : `Mode Réel — Données Modbus depuis ESP32 @ ${connectedIp ?? '…'} · Poll 40ms`
+                  : `Mode Réel — Données Modbus Holding Registers depuis ESP32 @ ${connectedIp ?? '…'} · Poll 40ms`
                 }
               </p>
             </div>

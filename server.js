@@ -1,49 +1,49 @@
 /**
  * HMI Backend — Pont WebSocket <-> Modbus TCP
  *
- * Architecture :
- *   Frontend (React) <--WebSocket--> Ce serveur <--Modbus TCP--> ESP32 WROOM
+ * ─── MAP MODBUS UNIFIÉE (ESP32 = Slave ID=1, port 502) ───────────────────
  *
- * Registres Modbus (ESP32 = Slave, ID=1) :
- *   Input Registers (lecture) :
- *     0  → Motor state (0=STOP, 1=RUN)
- *     1  → Nombre de canettes sur tapis
- *     2  → Total canettes traitées
- *     3  → Capteur sortie actif (0/1)
- *     4  → Capteur entrée actif (0/1)
- *     5-14 → Positions canettes 0-9 (0–100)
+ *  Holding Registers — lecture (readHoldingRegisters) :
+ *    HR0  → Motor state        (0=STOP, 1=RUN)
+ *    HR1  → Capteur entrée     (0/1)
+ *    HR2  → Capteur sortie     (0/1)
+ *    HR3  → Nb canettes tapis  (0–10)
+ *    HR4  → Total traité       (0–65535)
+ *    HR5  → Position canette 0 (0–100 %)
+ *    ...
+ *    HR14 → Position canette 9 (0–100 %)
  *
- *   Coils (écriture commandes HMI) :
- *     0  → Ajouter canette (pulse 100ms)
- *     1  → Récupérer canette (pulse 100ms)
+ *  Coils — écriture commandes HMI (writeCoil) :
+ *    C0  → Ajouter canette    (pulse 100ms)
+ *    C1  → Récupérer canette  (pulse 100ms)
  */
 
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import ModbusRTU from 'modbus-serial';
 
-const WS_PORT = 3001;
-const MODBUS_PORT = 502;
-const MODBUS_ID = 1;
-const SCAN_RATE_MS = 40;     // 25 Hz — cycle synchronisé avec le frontend
+const WS_PORT        = 3001;
+const MODBUS_PORT    = 502;
+const MODBUS_ID      = 1;
+const SCAN_RATE_MS   = 40;    // 25 Hz
 const CONNECT_TIMEOUT = 3000;
+const NUM_REGS       = 15;    // HR0–HR14
 
-// Adresses registres
-const REG_MOTOR        = 0;
-const REG_CAN_COUNT    = 1;
-const REG_TOTAL        = 2;
-const REG_EXIT_SENSOR  = 3;
-const REG_ENTRY_SENSOR = 4;
-const REG_CAN_POS_BASE = 5;  // 5 à 14 pour les 10 canettes
+// ─── ADRESSES ─────────────────────────────────────────────────────────────
+const HR_MOTOR       = 0;
+const HR_SENSOR_IN   = 1;
+const HR_SENSOR_OUT  = 2;
+const HR_CAN_COUNT   = 3;
+const HR_TOTAL       = 4;
+const HR_POS_BASE    = 5;   // HR5 à HR14 = positions canettes 0–9
 
 const COIL_ADD_CAN      = 0;
 const COIL_RETRIEVE_CAN = 1;
 
-// ─── ÉTAT GLOBAL ───────────────────────────────────────────────────────────
-
+// ─── ÉTAT GLOBAL ──────────────────────────────────────────────────────────
 const modbusClient = new ModbusRTU();
 let isModbusConnected = false;
-let espIp = null;
+let espIp        = null;
 let scanInterval = null;
 
 let currentState = {
@@ -56,48 +56,34 @@ let currentState = {
   espIp:             null,
 };
 
-// ─── SERVEUR HTTP + WEBSOCKET ───────────────────────────────────────────────
-
-const httpServer = createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('HMI Modbus Backend\n');
-});
-
+// ─── WEBSOCKET ─────────────────────────────────────────────────────────────
+const httpServer = createServer();
 const wss = new WebSocketServer({ server: httpServer });
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
-  wss.clients.forEach(client => {
-    if (client.readyState === 1 /* OPEN */) {
-      client.send(msg);
-    }
-  });
+  wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
 }
 
 // ─── MODBUS ────────────────────────────────────────────────────────────────
-
 async function connectToESP(ip) {
-  // Fermer connexion existante si besoin
   if (isModbusConnected) {
     stopScanLoop();
     try { await modbusClient.close(); } catch (_) {}
     isModbusConnected = false;
   }
-
   try {
-    console.log(`[Modbus] Tentative connexion à ${ip}:${MODBUS_PORT}…`);
+    console.log(`[Modbus] Connexion à ${ip}:${MODBUS_PORT}…`);
     await modbusClient.connectTCP(ip, { port: MODBUS_PORT });
     modbusClient.setID(MODBUS_ID);
     modbusClient.setTimeout(CONNECT_TIMEOUT);
-
     isModbusConnected = true;
     espIp = ip;
     console.log(`[Modbus] ✓ Connecté à ESP32 ${ip}`);
-
     startScanLoop();
     return { success: true };
   } catch (err) {
-    console.error(`[Modbus] ✗ Échec connexion : ${err.message}`);
+    console.error(`[Modbus] ✗ Échec : ${err.message}`);
     isModbusConnected = false;
     return { success: false, error: err.message };
   }
@@ -117,26 +103,28 @@ async function disconnectFromESP() {
 
 async function readESPState() {
   try {
-    // Lecture de 15 registres d'entrée (motor + count + total + sensors + 10 positions)
-    const result = await modbusClient.readInputRegisters(0, 15);
+    // Lecture HR0–HR14 (15 Holding Registers)
+    const result = await modbusClient.readHoldingRegisters(0, NUM_REGS);
     const d = result.data;
 
-    const canCount = d[REG_CAN_COUNT];
+    const canCount = d[HR_CAN_COUNT];
+
+    // Reconstitue le tableau de canettes avec leurs positions ESP32
     const cansOnConveyor = [];
     for (let i = 0; i < canCount && i < 10; i++) {
       cansOnConveyor.push({
         id:       i,
-        position: d[REG_CAN_POS_BASE + i],
+        position: d[HR_POS_BASE + i],
         label:    `CAN-${String(i + 1).padStart(3, '0')}`,
       });
     }
 
     currentState = {
-      motorActive:       d[REG_MOTOR]        === 1,
+      motorActive:       d[HR_MOTOR]      === 1,
+      entrySensorActive: d[HR_SENSOR_IN]  === 1,
+      exitSensorActive:  d[HR_SENSOR_OUT] === 1,
       cansOnConveyor,
-      totalCounter:      d[REG_TOTAL],
-      exitSensorActive:  d[REG_EXIT_SENSOR]  === 1,
-      entrySensorActive: d[REG_ENTRY_SENSOR] === 1,
+      totalCounter:      d[HR_TOTAL],
       connected:         true,
       espIp,
     };
@@ -152,15 +140,15 @@ async function readESPState() {
   }
 }
 
-async function pulseCoil(coilAddress) {
+async function pulseCoil(addr) {
   if (!isModbusConnected) return;
   try {
-    await modbusClient.writeCoil(coilAddress, true);
+    await modbusClient.writeCoil(addr, true);
     setTimeout(async () => {
-      try { await modbusClient.writeCoil(coilAddress, false); } catch (_) {}
+      try { await modbusClient.writeCoil(addr, false); } catch (_) {}
     }, 100);
   } catch (err) {
-    console.error(`[Modbus] Erreur écriture coil ${coilAddress} : ${err.message}`);
+    console.error(`[Modbus] Erreur coil ${addr} : ${err.message}`);
   }
 }
 
@@ -172,27 +160,17 @@ function startScanLoop() {
 }
 
 function stopScanLoop() {
-  if (scanInterval) {
-    clearInterval(scanInterval);
-    scanInterval = null;
-  }
+  if (scanInterval) { clearInterval(scanInterval); scanInterval = null; }
 }
 
-// ─── GESTION WEBSOCKET ─────────────────────────────────────────────────────
-
+// ─── GESTION MESSAGES WEBSOCKET ────────────────────────────────────────────
 wss.on('connection', (ws) => {
   console.log('[WS] Frontend connecté');
-
-  // Envoyer l'état actuel immédiatement
   ws.send(JSON.stringify({ type: 'state', data: currentState }));
 
   ws.on('message', async (raw) => {
     let msg;
-    try {
-      msg = JSON.parse(raw.toString());
-    } catch {
-      return;
-    }
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     switch (msg.type) {
       case 'connect': {
@@ -200,38 +178,21 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'connect_result', ...result, ip: msg.ip }));
         break;
       }
-      case 'disconnect':
-        await disconnectFromESP();
-        break;
-
-      case 'addCan':
-        await pulseCoil(COIL_ADD_CAN);
-        break;
-
-      case 'retrieveCan':
-        await pulseCoil(COIL_RETRIEVE_CAN);
-        break;
-
-      default:
-        console.warn(`[WS] Message inconnu : ${msg.type}`);
+      case 'disconnect':    await disconnectFromESP(); break;
+      case 'addCan':        await pulseCoil(COIL_ADD_CAN); break;
+      case 'retrieveCan':   await pulseCoil(COIL_RETRIEVE_CAN); break;
+      default: console.warn(`[WS] Message inconnu : ${msg.type}`);
     }
   });
 
-  ws.on('close', () => {
-    console.log('[WS] Frontend déconnecté');
-  });
-
-  ws.on('error', (err) => {
-    console.error('[WS] Erreur :', err.message);
-  });
+  ws.on('close', () => console.log('[WS] Frontend déconnecté'));
+  ws.on('error', err => console.error('[WS] Erreur :', err.message));
 });
 
 // ─── DÉMARRAGE ─────────────────────────────────────────────────────────────
-
 httpServer.listen(WS_PORT, () => {
   console.log('╔══════════════════════════════════════════╗');
   console.log('║     HMI Modbus Backend — Démarré         ║');
   console.log(`║     WebSocket : ws://localhost:${WS_PORT}      ║`);
   console.log('╚══════════════════════════════════════════╝');
-  console.log('En attente de connexion frontend…');
 });
