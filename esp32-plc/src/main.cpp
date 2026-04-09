@@ -79,7 +79,13 @@ bool retrieveCan() {
   for (int i = 0; i < MAX_CANS; i++) {
     if (cans[i].active && cans[i].position >= 100.0f) {
       cans[i].active = false; cans[i].position = 0.0f;
-      canCount--; totalOut++;
+      if (canCount > 0) {
+        canCount--;
+        totalOut++;
+      }
+      else {
+        Serial.println("[PLC] Erreur : tentative de récupérer une canette alors que le compteur est à zéro.");
+      }
       return true;
     }
   }

@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const ModbusRTU = require('modbus-serial');
+const Modbus = require('modbus-tcp');
 const cors = require('cors');
 
 const app = express();
@@ -12,56 +12,59 @@ const io = new Server(server, {
   cors: { origin: '*' }
 });
 
-const client = new ModbusRTU();
+// Initialisation du client Modbus TCP
+const client = new Modbus.Client();
 let isConnected = false;
-const ESP32_IP = '192.168.1.100'; // Modifier l'IP selon la config du routeur RPi
-const ESP32_PORT = 502; // Port Modbus TCP standard
+const ESP32_IP = '192.168.1.100'; 
+const ESP32_PORT = 502;
 
-// Fonction pour se connecter au Modbus ESP32
 const connectToModbus = () => {
-  client.connectTCP(ESP32_IP, { port: ESP32_PORT })
-    .then(() => {
-      client.setID(1); // ID d'esclave Modbus
-      isConnected = true;
-      console.log('Connecté au Modbus TCP (ESP32) sur ' + ESP32_IP);
-      io.emit('modbus_status', { connected: true });
-    })
-    .catch((e) => {
-      isConnected = false;
-      console.log('Erreur de connexion Modbus, nouvelle tentative dans 5s...');
-      io.emit('modbus_status', { connected: false });
-      setTimeout(connectToModbus, 5000);
-    });
+  console.log(`Tentative de connexion à ${ESP32_IP}...`);
+  client.connect(ESP32_PORT, ESP32_IP);
 };
 
+// Gestionnaires d'événements de connexion
+client.on('connect', () => {
+  isConnected = true;
+  console.log('Connecté au Modbus TCP (ESP32)');
+  io.emit('modbus_status', { connected: true });
+});
+
+client.on('error', (err) => {
+  isConnected = false;
+  console.log('Erreur Modbus:', err.message);
+  io.emit('modbus_status', { connected: false });
+});
+
+client.on('close', () => {
+  isConnected = false;
+  console.log('Connexion fermée, tentative de reconnexion dans 5s...');
+  setTimeout(connectToModbus, 5000);
+});
+
+// Lancement de la première connexion
 connectToModbus();
 
-// Boucle de lecture Modbus toutes les 500ms
-setInterval(async () => {
+// Boucle de lecture (Polling)
+setInterval(() => {
   if (isConnected) {
-    try {
-      // Lecture de 10 registres à partir de 0 (exemple d'adresse)
-      // Mappage : 
-      // 0: Etat moteur (0 ou 1)
-      // 1: Capteur Entrée (0 ou 1)
-      // 2: Capteur Sortie (0 ou 1)
-      // 3: Nombre de canettes sur le tapis
-      // 4: Total sorti
-      const data = await client.readHoldingRegisters(0, 5);
-      
+    // Lecture de 5 registres (Holding Registers) à l'adresse 0
+    // Syntaxe : readHoldingRegisters(unitID, address, count, callback)
+    client.readHoldingRegisters(1, 0, 5, (err, data) => {
+      if (err) {
+        console.error('Erreur de lecture:', err);
+        return;
+      }
+
+      // 'data' est un tableau de valeurs
       io.emit('modbus_data', {
-        motorRunning: data.data[0] === 1,
-        sensorEntry: data.data[1] === 1,
-        sensorExit: data.data[2] === 1,
-        cansCount: data.data[3],
-        cansOut: data.data[4]
+        motorRunning: data[0] === 1,
+        sensorEntry: data[1] === 1,
+        sensorExit: data[2] === 1,
+        cansCount: data[3],
+        cansOut: data[4]
       });
-    } catch (e) {
-      console.log('Erreur lecture Modbus:', e.message);
-      client.close();
-      isConnected = false;
-      setTimeout(connectToModbus, 1000);
-    }
+    });
   }
 }, 500);
 
@@ -70,23 +73,22 @@ io.on('connection', (socket) => {
   console.log('Nouvelle connexion IHM');
   socket.emit('modbus_status', { connected: isConnected });
 
-  socket.on('simulate_entry', async () => {
+  socket.on('simulate_entry', () => {
     if (isConnected) {
-      console.log('Envoi commande: Ajouter Canette (Capteur Entrée)');
-      try {
-        await client.writeCoil(1, true); // Ex : Coil 1 = déclenchement capteur entrée
-        setTimeout(() => client.writeCoil(1, false), 500); // Impulsion
-      } catch(e) { console.error('Erreur writeCoil entry', e) }
+      console.log('Envoi commande: Pulse Coil 1');
+      // Ecriture Coil : writeCoil(unitID, address, value, callback)
+      client.writeCoil(1, 1, true, () => {
+        setTimeout(() => client.writeCoil(1, 1, false), 500);
+      });
     }
   });
 
-  socket.on('simulate_exit', async () => {
+  socket.on('simulate_exit', () => {
     if (isConnected) {
-      console.log('Envoi commande: Récupérer Canette (Capteur Sortie)');
-      try {
-        await client.writeCoil(2, true); // Ex : Coil 2 = déclenchement capteur sortie
-        setTimeout(() => client.writeCoil(2, false), 500); // Impulsion
-      } catch(e) { console.error('Erreur writeCoil exit', e) }
+      console.log('Envoi commande: Pulse Coil 2');
+      client.writeCoil(1, 2, true, () => {
+        setTimeout(() => client.writeCoil(1, 2, false), 500);
+      });
     }
   });
 });
@@ -95,4 +97,3 @@ const PORT = 3001;
 server.listen(PORT, () => {
   console.log(`Serveur Gateway RPi démarré sur le port ${PORT}`);
 });
-
