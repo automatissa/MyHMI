@@ -6,9 +6,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      // Proxy WebSocket vers le backend Node.js (port 3001)
+      // Proxy WebSocket vers le backend Node.js (port 3002)
       '/ws': {
-        target: 'ws://localhost:3001',
+        target: 'ws://localhost:3002',
         ws: true,
         rewriteWsOrigin: true,
       },

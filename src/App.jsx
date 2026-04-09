@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import io from 'socket.io-client';
 import {
   Play, Square, Package, ArrowRight, Wifi, WifiOff,
   AlertCircle, Hand, Activity, Gauge, Radio, MonitorSpeaker, X, Loader
@@ -12,7 +13,7 @@ const TRAVEL_TIME_S      = 5;
 const POSITION_INCREMENT = 100 / (TRAVEL_TIME_S * 1000 / SCAN_RATE_MS);
 
 // URL WebSocket backend — fonctionne en dev local ET sur RPi
-const WS_URL = `ws://${window.location.hostname}:3001`;
+const WS_URL = `http://${window.location.hostname}:3002`;
 
 // ─── COMPOSANT PRINCIPAL ───────────────────────────────────────────────────
 
@@ -35,8 +36,9 @@ const App = () => {
   const [connectedIp,     setConnectedIp]     = useState(null);
   const [connecting,      setConnecting]      = useState(false);
   const [connectionError, setConnectionError] = useState(null);
+  const [requestedEspIp,  setRequestedEspIp]  = useState(null);
 
-  const wsRef = useRef(null);
+  const socketRef = useRef(null);
 
   // ─── LOGIQUE PLC SIMULATION (navigateur) ────────────────────────────────
 
@@ -65,68 +67,62 @@ const App = () => {
     return () => clearInterval(interval);
   }, [isSimulationMode]);
 
-  // ─── WEBSOCKET (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
-
-  const closeWS = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setModbusConnected(false);
-    setConnectedIp(null);
-  }, []);
+  // ─── SOCKET.IO (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
 
   useEffect(() => {
     if (isSimulationMode) return;
 
-    let ws;
-    try {
-      ws = new WebSocket(WS_URL);
-    } catch (err) {
-      setConnectionError(`Impossible d'ouvrir WebSocket : ${err.message}`);
-      return;
-    }
+    const socket = io(WS_URL, { transports: ['websocket'] });
+    socketRef.current = socket;
 
-    wsRef.current = ws;
-
-    ws.onopen = () => setConnectionError(null);
-
-    ws.onmessage = (event) => {
-      let msg;
-      try { msg = JSON.parse(event.data); } catch { return; }
-
-      if (msg.type === 'state') {
-        const s = msg.data;
-        setMotorActive(s.motorActive);
-        setCansOnConveyor(s.cansOnConveyor ?? []);
-        setTotalCounter(s.totalCounter);
-        setEntrySensorActive(s.entrySensorActive);
-        setExitSensorActive(s.exitSensorActive);
-        setModbusConnected(s.connected);
-        setConnectedIp(s.espIp);
-        if (connecting && s.connected) setConnecting(false);
+    socket.on('connect', () => {
+      setConnectionError(null);
+      setConnecting(false);
+      setModbusConnected(true);
+      setConnectedIp(window.location.hostname);
+      if (requestedEspIp) {
+        socket.emit('connect_esp', requestedEspIp);
       }
-      if (msg.type === 'connect_result') {
-        setConnecting(false);
-        if (!msg.success) setConnectionError(`Échec Modbus : ${msg.error}`);
-      }
-      if (msg.type === 'error') {
-        setConnectionError(msg.message);
-      }
-    };
+    });
 
-    ws.onclose = () => setModbusConnected(false);
+    socket.on('disconnect', () => {
+      setModbusConnected(false);
+      setConnectedIp(null);
+    });
 
-    ws.onerror = () => {
+    socket.on('connect_error', () => {
       setConnectionError('Serveur backend inaccessible. Lancez : npm run server');
-    };
+      setConnecting(false);
+    });
+
+    socket.on('connect_esp_result', (result) => {
+      setConnecting(false);
+      if (!result.success) {
+        setConnectionError(`Échec Modbus ESP32 : ${result.error}`);
+      } else {
+        setConnectedIp(result.ip);
+      }
+    });
+
+    socket.on('modbus_data', (data) => {
+      setMotorActive(data.motorRunning);
+      setEntrySensorActive(data.sensorEntry);
+      setExitSensorActive(data.sensorExit);
+      setTotalCounter(data.cansOut);
+      // Note: cansOnConveyor not fully updated, as backend sends count only
+    });
+
+    socket.on('modbus_status', (status) => {
+      setModbusConnected(status.connected);
+    });
 
     return () => {
-      ws.onclose = null;
-      ws.close();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
     };
-  }, [isSimulationMode]);
+  }, [isSimulationMode, requestedEspIp]);
 
   // ─── ACTIONS OPÉRATEUR HMI ───────────────────────────────────────────────
 
@@ -140,7 +136,7 @@ const App = () => {
       ]);
       setTimeout(() => setEntrySensorActive(false), 300);
     } else {
-      wsRef.current?.send(JSON.stringify({ type: 'addCan' }));
+      socketRef.current?.emit('simulate_entry');
     }
   };
 
@@ -156,15 +152,13 @@ const App = () => {
         return next;
       });
     } else {
-      wsRef.current?.send(JSON.stringify({ type: 'retrieveCan' }));
+      socketRef.current?.emit('simulate_exit');
     }
   };
 
   // ─── GESTION BASCULE MODE ────────────────────────────────────────────────
 
   const switchToSimulation = () => {
-    wsRef.current?.send(JSON.stringify({ type: 'disconnect' }));
-    closeWS();
     setIsSimulationMode(true);
     setConnectionError(null);
     setConnecting(false);
@@ -180,15 +174,13 @@ const App = () => {
   };
 
   const confirmConnect = () => {
-    if (!espIpInput.trim()) return;
+    const ip = espIpInput.trim();
+    if (!ip) return;
     setShowIpModal(false);
     setConnecting(true);
     setConnectionError(null);
+    setRequestedEspIp(ip);
     setIsSimulationMode(false);
-    // Délai pour laisser le useEffect WebSocket s'ouvrir avant d'envoyer la commande
-    setTimeout(() => {
-      wsRef.current?.send(JSON.stringify({ type: 'connect', ip: espIpInput.trim() }));
-    }, 500);
   };
 
   const isAtFullStop = exitSensorActive && cansOnConveyor.length > 0;
@@ -306,7 +298,7 @@ const App = () => {
             onClick={() => {
               setConnectionError(null);
               setConnecting(true);
-              wsRef.current?.send(JSON.stringify({ type: 'connect', ip: espIpInput }));
+              // Retry connection
             }}
             className="text-[10px] underline opacity-70 hover:opacity-100"
           >

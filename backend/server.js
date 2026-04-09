@@ -1,8 +1,8 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const ModbusRTU = require('modbus-serial');
-const cors = require('cors');
+import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
+import ModbusRTU from 'modbus-serial';
+import cors from 'cors';
 
 const app = express();
 app.use(cors());
@@ -14,23 +14,26 @@ const io = new Server(server, {
 
 const client = new ModbusRTU();
 let isConnected = false;
-const ESP32_IP = '192.168.1.100'; // Modifier l'IP selon la config du routeur RPi
+let ESP32_IP = '192.168.1.100'; // Modifier l'IP selon la config du routeur RPi
 const ESP32_PORT = 502; // Port Modbus TCP standard
 
 // Fonction pour se connecter au Modbus ESP32
-const connectToModbus = () => {
-  client.connectTCP(ESP32_IP, { port: ESP32_PORT })
+const connectToModbus = (ip = ESP32_IP) => {
+  ESP32_IP = ip;
+  return client.connectTCP(ESP32_IP, { port: ESP32_PORT })
     .then(() => {
       client.setID(1); // ID d'esclave Modbus
       isConnected = true;
       console.log('Connecté au Modbus TCP (ESP32) sur ' + ESP32_IP);
       io.emit('modbus_status', { connected: true });
+      return { success: true, ip: ESP32_IP };
     })
     .catch((e) => {
       isConnected = false;
       console.log('Erreur de connexion Modbus, nouvelle tentative dans 5s...');
       io.emit('modbus_status', { connected: false });
-      setTimeout(connectToModbus, 5000);
+      setTimeout(() => connectToModbus(ESP32_IP), 5000);
+      return { success: false, error: e.message };
     });
 };
 
@@ -70,6 +73,16 @@ io.on('connection', (socket) => {
   console.log('Nouvelle connexion IHM');
   socket.emit('modbus_status', { connected: isConnected });
 
+  socket.on('connect_esp', async (ip) => {
+    if (!ip) {
+      socket.emit('connect_esp_result', { success: false, error: 'IP manquante' });
+      return;
+    }
+    console.log(`Demande de connexion ESP32 sur ${ip}`);
+    const result = await connectToModbus(ip);
+    socket.emit('connect_esp_result', result);
+  });
+
   socket.on('simulate_entry', async () => {
     if (isConnected) {
       console.log('Envoi commande: Ajouter Canette (Capteur Entrée)');
@@ -91,7 +104,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = 3001;
+const PORT = 3002;
 server.listen(PORT, () => {
   console.log(`Serveur Gateway RPi démarré sur le port ${PORT}`);
 });
