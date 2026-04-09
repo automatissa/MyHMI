@@ -36,6 +36,37 @@ const int HR_POS_BASE   = 5;
 const int COIL_ADD_CAN      = 0;
 const int COIL_RETRIEVE_CAN = 1;
 
+// ─── DISTRIBUTEUR DE JUS (N) — MAP MODBUS ──────────────────────────────────
+//  HR15  → NB_JUS (N)
+//  HR16  → CAPACITE_VERRE_ML
+//  HR17  → DOSE_VERSEMENT_ML
+//  HR18  → TOTAL_VERRE_ML
+//
+//  HR20..HR(20+N-1) → STOCK (unités) par jus
+//  HR40..HR(40+N-1) → ML dans le verre par jus
+//
+//  Coils (front montant, pulse depuis IHM) :
+//   C10..C(10+N-1) → +1 stock jus i
+//   C30..C(30+N-1) → -1 stock jus i
+//   C50..C(50+N-1) → verser jus i (consomme 1 stock, ajoute DOSE ml si capacité dispo)
+//   C70            → reset verre
+const int HR_JUICE_N       = 15;
+const int HR_GLASS_CAP_ML  = 16;
+const int HR_POUR_ML       = 17;
+const int HR_GLASS_TOTAL_ML= 18;
+const int HR_STOCK_BASE    = 20;
+const int HR_GLASS_BASE    = 40;
+
+const int COIL_STOCK_ADD_BASE = 10;
+const int COIL_STOCK_SUB_BASE = 30;
+const int COIL_POUR_BASE      = 50;
+const int COIL_RESET_GLASS    = 70;
+
+const int N_JUICES = 6;           // <-- "exactement N jus" côté PLC
+const int GLASS_CAPACITY_ML = 300;
+const int POUR_ML = 25;
+const int MAX_STOCK_PER_JUICE = 20;
+
 // ─── CONSTANTES PLC ───────────────────────────────────────────────────────
 const int   MAX_CANS       = 10;
 const int   TRAVEL_TIME_MS = 5000;  // 5 s pour traverser le tapis
@@ -53,6 +84,14 @@ bool  sensorIn     = false;
 bool  sensorOut    = false;
 bool  prevCoilAdd      = false;
 bool  prevCoilRetrieve = false;
+
+// Distributeur jus
+uint16_t juiceStock[N_JUICES];
+uint16_t glassMl[N_JUICES];
+bool prevCoilStockAdd[N_JUICES];
+bool prevCoilStockSub[N_JUICES];
+bool prevCoilPour[N_JUICES];
+bool prevCoilResetGlass = false;
 
 // ─── TIMERS (millis — non bloquants) ──────────────────────────────────────
 unsigned long lastPlcTick   = 0;   // cycle PLC 100ms
@@ -112,6 +151,15 @@ void setup() {
     cans[i].active = false; cans[i].position = 0.0f;
   }
 
+  // Init jus
+  for (int i = 0; i < N_JUICES; i++) {
+    juiceStock[i] = 0;
+    glassMl[i] = 0;
+    prevCoilStockAdd[i] = false;
+    prevCoilStockSub[i] = false;
+    prevCoilPour[i] = false;
+  }
+
   // Lancer Wi-Fi sans bloquer — loop() gérera le reste
   Serial.println("[WiFi] Connexion à " + String(WIFI_SSID) + "...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -143,9 +191,17 @@ void loop() {
   if (!modbusStarted) {
     Serial.println("[WiFi] Connecté — IP : " + WiFi.localIP().toString());
     mb.server();
-    for (int i = 0; i < HR_POS_BASE + MAX_CANS; i++) mb.addHreg(i, 0);
+    // Holding registers : on réserve large pour les 2 systèmes (convoyeur + jus)
+    for (int i = 0; i < 80; i++) mb.addHreg(i, 0);
     mb.addCoil(COIL_ADD_CAN,      false);
     mb.addCoil(COIL_RETRIEVE_CAN, false);
+    // Coils jus
+    for (int i = 0; i < N_JUICES; i++) {
+      mb.addCoil(COIL_STOCK_ADD_BASE + i, false);
+      mb.addCoil(COIL_STOCK_SUB_BASE + i, false);
+      mb.addCoil(COIL_POUR_BASE + i, false);
+    }
+    mb.addCoil(COIL_RESET_GLASS, false);
     modbusStarted = true;
     Serial.println("[Modbus] Serveur TCP prêt sur le port 502");
   }
@@ -180,6 +236,42 @@ void loop() {
   prevCoilAdd      = coilAdd;
   prevCoilRetrieve = coilRetrieve;
 
+  // ── 2b. COMMANDES JUS (front montant) ─────────────────────────────────
+  bool coilReset = mb.Coil(COIL_RESET_GLASS);
+  if (coilReset && !prevCoilResetGlass) {
+    for (int i = 0; i < N_JUICES; i++) glassMl[i] = 0;
+  }
+  prevCoilResetGlass = coilReset;
+
+  for (int i = 0; i < N_JUICES; i++) {
+    bool cAdd = mb.Coil(COIL_STOCK_ADD_BASE + i);
+    bool cSub = mb.Coil(COIL_STOCK_SUB_BASE + i);
+    bool cPour = mb.Coil(COIL_POUR_BASE + i);
+
+    if (cAdd && !prevCoilStockAdd[i]) {
+      if (juiceStock[i] < MAX_STOCK_PER_JUICE) juiceStock[i]++;
+    }
+    if (cSub && !prevCoilStockSub[i]) {
+      if (juiceStock[i] > 0) juiceStock[i]--;
+    }
+
+    // Versement : consomme 1 stock et ajoute POUR_ML si capacité dispo
+    if (cPour && !prevCoilPour[i]) {
+      uint32_t total = 0;
+      for (int k = 0; k < N_JUICES; k++) total += glassMl[k];
+      if (juiceStock[i] > 0 && total < (uint32_t)GLASS_CAPACITY_ML) {
+        uint16_t addMl = POUR_ML;
+        if (total + addMl > (uint32_t)GLASS_CAPACITY_ML) addMl = (uint16_t)(GLASS_CAPACITY_ML - total);
+        juiceStock[i]--;
+        glassMl[i] = (uint16_t)min((uint32_t)65535, (uint32_t)glassMl[i] + addMl);
+      }
+    }
+
+    prevCoilStockAdd[i] = cAdd;
+    prevCoilStockSub[i] = cSub;
+    prevCoilPour[i] = cPour;
+  }
+
   // ── 3. LOGIQUE MOTEUR ────────────────────────────────────────────────
   bool blocked = hasCanAtExit();
   motorRunning = (canCount > 0) && !blocked;
@@ -210,4 +302,18 @@ void loop() {
       mb.Hreg(HR_POS_BASE + slot++, (uint16_t)cans[i].position);
   }
   for (; slot < MAX_CANS; slot++) mb.Hreg(HR_POS_BASE + slot, 0);
+
+  // Distributeur jus : config + état
+  mb.Hreg(HR_JUICE_N, N_JUICES);
+  mb.Hreg(HR_GLASS_CAP_ML, GLASS_CAPACITY_ML);
+  mb.Hreg(HR_POUR_ML, POUR_ML);
+
+  uint32_t totalGlass = 0;
+  for (int i = 0; i < N_JUICES; i++) totalGlass += glassMl[i];
+  mb.Hreg(HR_GLASS_TOTAL_ML, (uint16_t)min((uint32_t)65535, totalGlass));
+
+  for (int i = 0; i < N_JUICES; i++) {
+    mb.Hreg(HR_STOCK_BASE + i, juiceStock[i]);
+    mb.Hreg(HR_GLASS_BASE + i, glassMl[i]);
+  }
 }

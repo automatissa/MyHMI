@@ -29,7 +29,7 @@ const MODBUS_PORT    = 502;
 const MODBUS_ID      = 1;
 const SCAN_RATE_MS   = 40;    // 25 Hz
 const CONNECT_TIMEOUT = 3000;
-const NUM_REGS       = 15;    // HR0–HR14
+const NUM_REGS       = 80;    // HR0–HR79 (convoyeur + jus)
 
 // ─── ADRESSES ─────────────────────────────────────────────────────────────
 const HR_MOTOR       = 0;
@@ -41,6 +41,19 @@ const HR_POS_BASE    = 5;   // HR5 à HR14 = positions canettes 0–9
 
 const COIL_ADD_CAN      = 0;
 const COIL_RETRIEVE_CAN = 1;
+
+// ─── DISTRIBUTEUR DE JUS (N) ───────────────────────────────────────────────
+const HR_JUICE_N         = 15;
+const HR_GLASS_CAP_ML    = 16;
+const HR_POUR_ML         = 17;
+const HR_GLASS_TOTAL_ML  = 18;
+const HR_STOCK_BASE      = 20;
+const HR_GLASS_BASE      = 40;
+
+const COIL_STOCK_ADD_BASE = 10;
+const COIL_STOCK_SUB_BASE = 30;
+const COIL_POUR_BASE      = 50;
+const COIL_RESET_GLASS    = 70;
 
 // ─── ÉTAT GLOBAL ──────────────────────────────────────────────────────────
 let modbusClient = null;
@@ -55,6 +68,14 @@ let currentState = {
   totalCounter:      0,
   entrySensorActive: false,
   exitSensorActive:  false,
+  juice: {
+    n: 0,
+    capacityMl: 0,
+    pourMl: 0,
+    totalMl: 0,
+    stock: [],
+    glass: [],
+  },
   connected:         false,
   espIp:             null,
 };
@@ -124,9 +145,15 @@ async function disconnectFromESP() {
 
 async function readESPState() {
   try {
+<<<<<<< HEAD
     // Lecture HR0–HR14 (15 Holding Registers)
     const response = await modbusClient.readHoldingRegisters(0, NUM_REGS);
     const d = response.response.body.valuesAsArray;
+=======
+    // Lecture HR0–HR79 (convoyeur + jus)
+    const result = await modbusClient.readHoldingRegisters(0, NUM_REGS);
+    const d = result.data;
+>>>>>>> fc13afd (Add juice dispenser module with real Modbus mode)
 
     const canCount = d[HR_CAN_COUNT];
 
@@ -140,12 +167,28 @@ async function readESPState() {
       });
     }
 
+    const nJuices = Math.max(0, Math.min(12, d[HR_JUICE_N] ?? 0));
+    const stock = [];
+    const glass = [];
+    for (let i = 0; i < nJuices; i++) {
+      stock.push(d[HR_STOCK_BASE + i] ?? 0);
+      glass.push(d[HR_GLASS_BASE + i] ?? 0);
+    }
+
     currentState = {
       motorActive:       d[HR_MOTOR]      === 1,
       entrySensorActive: d[HR_SENSOR_IN]  === 1,
       exitSensorActive:  d[HR_SENSOR_OUT] === 1,
       cansOnConveyor,
       totalCounter:      d[HR_TOTAL],
+      juice: {
+        n: nJuices,
+        capacityMl: d[HR_GLASS_CAP_ML] ?? 0,
+        pourMl: d[HR_POUR_ML] ?? 0,
+        totalMl: d[HR_GLASS_TOTAL_ML] ?? 0,
+        stock,
+        glass,
+      },
       connected:         true,
       espIp,
     };
@@ -202,6 +245,25 @@ wss.on('connection', (ws) => {
       case 'disconnect':    await disconnectFromESP(); break;
       case 'addCan':        await pulseCoil(COIL_ADD_CAN); break;
       case 'retrieveCan':   await pulseCoil(COIL_RETRIEVE_CAN); break;
+      case 'juiceStockAdd': {
+        const i = Number(msg.index);
+        if (Number.isInteger(i) && i >= 0 && i < 32) await pulseCoil(COIL_STOCK_ADD_BASE + i);
+        break;
+      }
+      case 'juiceStockSub': {
+        const i = Number(msg.index);
+        if (Number.isInteger(i) && i >= 0 && i < 32) await pulseCoil(COIL_STOCK_SUB_BASE + i);
+        break;
+      }
+      case 'juicePour': {
+        const i = Number(msg.index);
+        if (Number.isInteger(i) && i >= 0 && i < 32) await pulseCoil(COIL_POUR_BASE + i);
+        break;
+      }
+      case 'juiceResetGlass': {
+        await pulseCoil(COIL_RESET_GLASS);
+        break;
+      }
       default: console.warn(`[WS] Message inconnu : ${msg.type}`);
     }
   });

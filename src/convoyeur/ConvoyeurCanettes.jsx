@@ -1,6 +1,4 @@
-<<<<<<< HEAD
 import { useState, useEffect, useRef, useCallback } from 'react';
-import io from 'socket.io-client';
 import {
   Play, Square, Package, ArrowRight, Wifi, WifiOff,
   AlertCircle, Hand, Activity, Gauge, Radio, MonitorSpeaker, X, Loader
@@ -8,38 +6,34 @@ import {
 
 // ─── CONSTANTES PLC ────────────────────────────────────────────────────────
 
-const MAX_CAPACITY       = 10;
-const SCAN_RATE_MS       = 40;       // 25 Hz — cycle scan navigateur
-const TRAVEL_TIME_S      = 5;
+const MAX_CAPACITY = 10;
+const SCAN_RATE_MS = 40; // 25 Hz — cycle scan navigateur
+const TRAVEL_TIME_S = 5;
 const POSITION_INCREMENT = 100 / (TRAVEL_TIME_S * 1000 / SCAN_RATE_MS);
 
 // URL WebSocket backend — fonctionne en dev local ET sur RPi
-const WS_URL = `http://${window.location.hostname}:3002`;
+const WS_URL = `ws://${window.location.hostname}:3001`;
 
-// ─── COMPOSANT PRINCIPAL ───────────────────────────────────────────────────
-
-const App = () => {
-
+export default function ConvoyeurCanettes() {
   // --- MODE ---
   const [isSimulationMode, setIsSimulationMode] = useState(true);
-  const [showIpModal,      setShowIpModal]       = useState(false);
-  const [espIpInput,       setEspIpInput]        = useState('192.168.4.1');
+  const [showIpModal, setShowIpModal] = useState(false);
+  const [espIpInput, setEspIpInput] = useState('192.168.4.1');
 
   // --- ÉTAT SYSTÈME (miroir des registres Modbus ESP32) ---
-  const [motorActive,       setMotorActive]       = useState(false);
-  const [cansOnConveyor,    setCansOnConveyor]     = useState([]);
-  const [totalCounter,      setTotalCounter]       = useState(0);
-  const [entrySensorActive, setEntrySensorActive]  = useState(false);
-  const [exitSensorActive,  setExitSensorActive]   = useState(false);
+  const [motorActive, setMotorActive] = useState(false);
+  const [cansOnConveyor, setCansOnConveyor] = useState([]);
+  const [totalCounter, setTotalCounter] = useState(0);
+  const [entrySensorActive, setEntrySensorActive] = useState(false);
+  const [exitSensorActive, setExitSensorActive] = useState(false);
 
   // --- ÉTAT CONNEXION (Mode Réel) ---
   const [modbusConnected, setModbusConnected] = useState(false);
-  const [connectedIp,     setConnectedIp]     = useState(null);
-  const [connecting,      setConnecting]      = useState(false);
+  const [connectedIp, setConnectedIp] = useState(null);
+  const [connecting, setConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
-  const [requestedEspIp,  setRequestedEspIp]  = useState(null);
 
-  const socketRef = useRef(null);
+  const wsRef = useRef(null);
 
   // ─── LOGIQUE PLC SIMULATION (navigateur) ────────────────────────────────
 
@@ -49,7 +43,7 @@ const App = () => {
     const processPLCCycle = () => {
       setCansOnConveyor(prevCans => {
         const isBlockedByExit = prevCans.some(can => can.position >= 100);
-        const shouldMotorRun  = prevCans.length > 0 && !isBlockedByExit;
+        const shouldMotorRun = prevCans.length > 0 && !isBlockedByExit;
 
         setMotorActive(shouldMotorRun);
         setExitSensorActive(isBlockedByExit);
@@ -68,62 +62,68 @@ const App = () => {
     return () => clearInterval(interval);
   }, [isSimulationMode]);
 
-  // ─── SOCKET.IO (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
+  // ─── WEBSOCKET (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
+
+  const closeWS = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.onclose = null;
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    setModbusConnected(false);
+    setConnectedIp(null);
+  }, []);
 
   useEffect(() => {
     if (isSimulationMode) return;
 
-    const socket = io(WS_URL, { transports: ['websocket'] });
-    socketRef.current = socket;
+    let ws;
+    try {
+      ws = new WebSocket(WS_URL);
+    } catch (err) {
+      setConnectionError(`Impossible d'ouvrir WebSocket : ${err.message}`);
+      return;
+    }
 
-    socket.on('connect', () => {
-      setConnectionError(null);
-      setConnecting(false);
-      setModbusConnected(true);
-      setConnectedIp(window.location.hostname);
-      if (requestedEspIp) {
-        socket.emit('connect_esp', requestedEspIp);
+    wsRef.current = ws;
+
+    ws.onopen = () => setConnectionError(null);
+
+    ws.onmessage = (event) => {
+      let msg;
+      try { msg = JSON.parse(event.data); } catch { return; }
+
+      if (msg.type === 'state') {
+        const s = msg.data;
+        setMotorActive(s.motorActive);
+        setCansOnConveyor(s.cansOnConveyor ?? []);
+        setTotalCounter(s.totalCounter);
+        setEntrySensorActive(s.entrySensorActive);
+        setExitSensorActive(s.exitSensorActive);
+        setModbusConnected(s.connected);
+        setConnectedIp(s.espIp);
+        if (connecting && s.connected) setConnecting(false);
       }
-    });
-
-    socket.on('disconnect', () => {
-      setModbusConnected(false);
-      setConnectedIp(null);
-    });
-
-    socket.on('connect_error', () => {
-      setConnectionError('Serveur backend inaccessible. Lancez : npm run server');
-      setConnecting(false);
-    });
-
-    socket.on('connect_esp_result', (result) => {
-      setConnecting(false);
-      if (!result.success) {
-        setConnectionError(`Échec Modbus ESP32 : ${result.error}`);
-      } else {
-        setConnectedIp(result.ip);
+      if (msg.type === 'connect_result') {
+        setConnecting(false);
+        if (!msg.success) setConnectionError(`Échec Modbus : ${msg.error}`);
       }
-    });
-
-    socket.on('modbus_data', (data) => {
-      setMotorActive(data.motorRunning);
-      setEntrySensorActive(data.sensorEntry);
-      setExitSensorActive(data.sensorExit);
-      setTotalCounter(data.cansOut);
-      // Note: cansOnConveyor not fully updated, as backend sends count only
-    });
-
-    socket.on('modbus_status', (status) => {
-      setModbusConnected(status.connected);
-    });
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
+      if (msg.type === 'error') {
+        setConnectionError(msg.message);
       }
     };
-  }, [isSimulationMode, requestedEspIp]);
+
+    ws.onclose = () => setModbusConnected(false);
+
+    ws.onerror = () => {
+      setConnectionError('Serveur backend inaccessible. Lancez : npm run server');
+    };
+
+    return () => {
+      ws.onclose = null;
+      ws.close();
+    };
+  }, [isSimulationMode, connecting]);
 
   // ─── ACTIONS OPÉRATEUR HMI ───────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ const App = () => {
       ]);
       setTimeout(() => setEntrySensorActive(false), 300);
     } else {
-      socketRef.current?.emit('simulate_entry');
+      wsRef.current?.send(JSON.stringify({ type: 'addCan' }));
     }
   };
 
@@ -153,13 +153,15 @@ const App = () => {
         return next;
       });
     } else {
-      socketRef.current?.emit('simulate_exit');
+      wsRef.current?.send(JSON.stringify({ type: 'retrieveCan' }));
     }
   };
 
   // ─── GESTION BASCULE MODE ────────────────────────────────────────────────
 
   const switchToSimulation = () => {
+    wsRef.current?.send(JSON.stringify({ type: 'disconnect' }));
+    closeWS();
     setIsSimulationMode(true);
     setConnectionError(null);
     setConnecting(false);
@@ -175,13 +177,14 @@ const App = () => {
   };
 
   const confirmConnect = () => {
-    const ip = espIpInput.trim();
-    if (!ip) return;
+    if (!espIpInput.trim()) return;
     setShowIpModal(false);
     setConnecting(true);
     setConnectionError(null);
-    setRequestedEspIp(ip);
     setIsSimulationMode(false);
+    setTimeout(() => {
+      wsRef.current?.send(JSON.stringify({ type: 'connect', ip: espIpInput.trim() }));
+    }, 500);
   };
 
   const isAtFullStop = exitSensorActive && cansOnConveyor.length > 0;
@@ -190,7 +193,6 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
-
       {/* MODAL SAISIE IP ESP32 */}
       {showIpModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -299,7 +301,7 @@ const App = () => {
             onClick={() => {
               setConnectionError(null);
               setConnecting(true);
-              // Retry connection
+              wsRef.current?.send(JSON.stringify({ type: 'connect', ip: espIpInput }));
             }}
             className="text-[10px] underline opacity-70 hover:opacity-100"
           >
@@ -309,7 +311,6 @@ const App = () => {
       )}
 
       <main className="w-full grid grid-cols-1 lg:grid-cols-4 gap-6">
-
         {/* STATUTS PLC */}
         <div className="lg:col-span-1 space-y-6">
           <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-2xl">
@@ -385,8 +386,8 @@ const App = () => {
                 className="absolute inset-0 opacity-10 pointer-events-none"
                 style={{
                   backgroundImage: 'linear-gradient(90deg, #fff 2px, transparent 2px)',
-                  backgroundSize:  '40px 100%',
-                  animation:        motorActive ? 'scroll 0.8s linear infinite' : 'none',
+                  backgroundSize: '40px 100%',
+                  animation: motorActive ? 'scroll 0.8s linear infinite' : 'none',
                 }}
               />
 
@@ -447,7 +448,6 @@ const App = () => {
           {/* COMMANDES HMI */}
           <div className="bg-slate-900 rounded-3xl p-6 border border-slate-800 shadow-xl">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-
               <button
                 onClick={addCan}
                 disabled={isSimulationMode ? cansOnConveyor.length >= MAX_CAPACITY : !modbusConnected}
@@ -510,56 +510,6 @@ const App = () => {
           to   { background-position: 40px 0; }
         }
       `}} />
-    </div>
-  );
-=======
-import { useState } from 'react';
-import ConvoyeurCanettes from './convoyeur/ConvoyeurCanettes.jsx';
-import DistributeurJus from './distributeur_jus/DistributeurJus.jsx';
-
-const SCREENS = {
-  convoyeur: 'convoyeur',
-  jus: 'jus',
->>>>>>> fc13afd (Add juice dispenser module with real Modbus mode)
-};
-
-export default function App() {
-  const [screen, setScreen] = useState(SCREENS.convoyeur);
-
-  return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="sticky top-0 z-50 bg-slate-950/80 backdrop-blur border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 md:px-8 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setScreen(SCREENS.convoyeur)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider border transition-all active:scale-95 ${
-                screen === SCREENS.convoyeur
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              Convoyeur
-            </button>
-            <button
-              onClick={() => setScreen(SCREENS.jus)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider border transition-all active:scale-95 ${
-                screen === SCREENS.jus
-                  ? 'bg-fuchsia-600 border-fuchsia-500 text-white'
-                  : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              Distributeur jus
-            </button>
-          </div>
-
-          <div className="text-[10px] text-slate-500 font-mono uppercase tracking-widest">
-            IHM • React
-          </div>
-        </div>
-      </div>
-
-      {screen === SCREENS.convoyeur ? <ConvoyeurCanettes /> : <DistributeurJus />}
     </div>
   );
 }
