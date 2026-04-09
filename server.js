@@ -20,7 +20,9 @@
 
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
-import ModbusRTU from 'modbus-serial';
+import pkg from 'jsmodbus';
+const { Modbus } = pkg;
+import net from 'net';
 
 const WS_PORT        = 3001;
 const MODBUS_PORT    = 502;
@@ -41,7 +43,8 @@ const COIL_ADD_CAN      = 0;
 const COIL_RETRIEVE_CAN = 1;
 
 // ─── ÉTAT GLOBAL ──────────────────────────────────────────────────────────
-const modbusClient = new ModbusRTU();
+let modbusClient = null;
+let socket = null;
 let isModbusConnected = false;
 let espIp        = null;
 let scanInterval = null;
@@ -69,30 +72,48 @@ function broadcast(data) {
 async function connectToESP(ip) {
   if (isModbusConnected) {
     stopScanLoop();
-    try { await modbusClient.close(); } catch (_) {}
+    if (socket) {
+      socket.destroy();
+    }
+    modbusClient = null;
+    socket = null;
     isModbusConnected = false;
   }
-  try {
-    console.log(`[Modbus] Connexion à ${ip}:${MODBUS_PORT}…`);
-    await modbusClient.connectTCP(ip, { port: MODBUS_PORT });
-    modbusClient.setID(MODBUS_ID);
-    modbusClient.setTimeout(CONNECT_TIMEOUT);
-    isModbusConnected = true;
-    espIp = ip;
-    console.log(`[Modbus] ✓ Connecté à ESP32 ${ip}`);
-    startScanLoop();
-    return { success: true };
-  } catch (err) {
-    console.error(`[Modbus] ✗ Échec : ${err.message}`);
-    isModbusConnected = false;
-    return { success: false, error: err.message };
-  }
+  return new Promise((resolve) => {
+    try {
+      console.log(`[Modbus] Connexion à ${ip}:${MODBUS_PORT}…`);
+      socket = new net.Socket();
+      modbusClient = new Modbus.client.TCP(socket, MODBUS_ID);
+      socket.connect({ host: ip, port: MODBUS_PORT });
+      socket.on('connect', () => {
+        isModbusConnected = true;
+        espIp = ip;
+        console.log(`[Modbus] ✓ Connecté à ESP32 ${ip}`);
+        startScanLoop();
+        resolve({ success: true });
+      });
+      socket.on('error', (err) => {
+        console.error(`[Modbus] ✗ Échec : ${err.message}`);
+        isModbusConnected = false;
+        resolve({ success: false, error: err.message });
+      });
+      socket.setTimeout(CONNECT_TIMEOUT);
+    } catch (err) {
+      console.error(`[Modbus] ✗ Échec : ${err.message}`);
+      isModbusConnected = false;
+      resolve({ success: false, error: err.message });
+    }
+  });
 }
 
 async function disconnectFromESP() {
   stopScanLoop();
   if (isModbusConnected) {
-    try { await modbusClient.close(); } catch (_) {}
+    if (socket) {
+      socket.destroy();
+    }
+    modbusClient = null;
+    socket = null;
     isModbusConnected = false;
   }
   espIp = null;
@@ -104,8 +125,8 @@ async function disconnectFromESP() {
 async function readESPState() {
   try {
     // Lecture HR0–HR14 (15 Holding Registers)
-    const result = await modbusClient.readHoldingRegisters(0, NUM_REGS);
-    const d = result.data;
+    const response = await modbusClient.readHoldingRegisters(0, NUM_REGS);
+    const d = response.response.body.valuesAsArray;
 
     const canCount = d[HR_CAN_COUNT];
 
@@ -143,9 +164,9 @@ async function readESPState() {
 async function pulseCoil(addr) {
   if (!isModbusConnected) return;
   try {
-    await modbusClient.writeCoil(addr, true);
+    await modbusClient.writeSingleCoil(addr, true);
     setTimeout(async () => {
-      try { await modbusClient.writeCoil(addr, false); } catch (_) {}
+      try { await modbusClient.writeSingleCoil(addr, false); } catch (_) {}
     }, 100);
   } catch (err) {
     console.error(`[Modbus] Erreur coil ${addr} : ${err.message}`);
