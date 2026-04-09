@@ -21,8 +21,6 @@ const App = () => {
 
   // --- MODE ---
   const [isSimulationMode, setIsSimulationMode] = useState(true);
-  const [showIpModal,      setShowIpModal]       = useState(false);
-  const [espIpInput,       setEspIpInput]        = useState('192.168.4.1');
 
   // --- ÉTAT SYSTÈME (miroir des registres Modbus ESP32) ---
   const [motorActive,       setMotorActive]       = useState(false);
@@ -36,7 +34,6 @@ const App = () => {
   const [connectedIp,     setConnectedIp]     = useState(null);
   const [connecting,      setConnecting]      = useState(false);
   const [connectionError, setConnectionError] = useState(null);
-  const [requestedEspIp,  setRequestedEspIp]  = useState(null);
 
   const socketRef = useRef(null);
 
@@ -69,20 +66,20 @@ const App = () => {
 
   // ─── SOCKET.IO (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
 
+  // ─── AUTO-CONNEXION MODBUS (Pas de Modal, Connexion Directe) ─────────────
+
   useEffect(() => {
     if (isSimulationMode) return;
+
+    setConnecting(true);
+    setConnectionError(null);
 
     const socket = io(WS_URL, { transports: ['websocket'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      setConnectionError(null);
       setConnecting(false);
-      setModbusConnected(true);
-      setConnectedIp(window.location.hostname);
-      if (requestedEspIp) {
-        socket.emit('connect_esp', requestedEspIp);
-      }
+      setConnectionError(null);
     });
 
     socket.on('disconnect', () => {
@@ -95,21 +92,13 @@ const App = () => {
       setConnecting(false);
     });
 
-    socket.on('connect_esp_result', (result) => {
-      setConnecting(false);
-      if (!result.success) {
-        setConnectionError(`Échec Modbus ESP32 : ${result.error}`);
-      } else {
-        setConnectedIp(result.ip);
-      }
-    });
-
     socket.on('modbus_data', (data) => {
       setMotorActive(data.motorRunning);
       setEntrySensorActive(data.sensorEntry);
       setExitSensorActive(data.sensorExit);
       setTotalCounter(data.cansOut);
-      // Note: cansOnConveyor not fully updated, as backend sends count only
+      setModbusConnected(true);
+      setConnectedIp('ESP32 @ 192.168.1.100');
     });
 
     socket.on('modbus_status', (status) => {
@@ -122,7 +111,7 @@ const App = () => {
         socketRef.current = null;
       }
     };
-  }, [isSimulationMode, requestedEspIp]);
+  }, [isSimulationMode]);
 
   // ─── ACTIONS OPÉRATEUR HMI ───────────────────────────────────────────────
 
@@ -168,18 +157,8 @@ const App = () => {
     setExitSensorActive(false);
   };
 
-  const openIpModal = () => {
+  const switchToRealMode = () => {
     setConnectionError(null);
-    setShowIpModal(true);
-  };
-
-  const confirmConnect = () => {
-    const ip = espIpInput.trim();
-    if (!ip) return;
-    setShowIpModal(false);
-    setConnecting(true);
-    setConnectionError(null);
-    setRequestedEspIp(ip);
     setIsSimulationMode(false);
   };
 
@@ -190,47 +169,7 @@ const App = () => {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
 
-      {/* MODAL SAISIE IP ESP32 */}
-      {showIpModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-8 w-full max-w-sm shadow-2xl">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
-                <div className="bg-emerald-600 p-2 rounded-xl">
-                  <Radio size={18} className="text-white" />
-                </div>
-                <h3 className="font-bold text-white">Connexion ESP32</h3>
-              </div>
-              <button onClick={() => setShowIpModal(false)} className="text-slate-500 hover:text-white transition-colors">
-                <X size={20} />
-              </button>
-            </div>
 
-            <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Adresse IP de l'ESP32</label>
-            <input
-              type="text"
-              value={espIpInput}
-              onChange={e => setEspIpInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && confirmConnect()}
-              placeholder="192.168.4.1"
-              className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white font-mono text-sm focus:outline-none focus:border-emerald-500 transition-colors mb-2"
-              autoFocus
-            />
-            <p className="text-[10px] text-slate-600 mb-6">
-              Port Modbus TCP : 502 — ID esclave : 1 — Holding Registers
-            </p>
-
-            <div className="flex gap-3">
-              <button onClick={() => setShowIpModal(false)} className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-medium transition-colors">
-                Annuler
-              </button>
-              <button onClick={confirmConnect} className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold transition-colors">
-                Connecter
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* HEADER HMI */}
       <header className="w-full mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
@@ -270,7 +209,7 @@ const App = () => {
 
           {isSimulationMode ? (
             <button
-              onClick={openIpModal}
+              onClick={switchToRealMode}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all active:scale-95"
             >
               <Radio size={13} /> Mode Réel

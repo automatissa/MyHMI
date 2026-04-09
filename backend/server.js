@@ -73,16 +73,6 @@ io.on('connection', (socket) => {
   console.log('Nouvelle connexion IHM');
   socket.emit('modbus_status', { connected: isConnected });
 
-  socket.on('connect_esp', async (ip) => {
-    if (!ip) {
-      socket.emit('connect_esp_result', { success: false, error: 'IP manquante' });
-      return;
-    }
-    console.log(`Demande de connexion ESP32 sur ${ip}`);
-    const result = await connectToModbus(ip);
-    socket.emit('connect_esp_result', result);
-  });
-
   socket.on('simulate_entry', async () => {
     if (isConnected) {
       console.log('Envoi commande: Ajouter Canette (Capteur Entrée)');
