@@ -19,10 +19,6 @@
     "modbus-tcp": "^0.4.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-<<<<<<< HEAD
-=======
-    "socket.io": "^4.8.3",
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
     "socket.io-client": "^4.8.3",
     "ws": "^8.18.2"
   },

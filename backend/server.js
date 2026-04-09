@@ -74,41 +74,19 @@ io.on('connection', (socket) => {
   socket.on('simulate_entry', async () => {
     if (isConnected) {
       console.log('Envoi commande: Pulse Coil 1');
-<<<<<<< HEAD
       // Ecriture Coil : writeCoil(unitID, address, value, callback)
       client.writeCoil(1, 0, true, () => {
         setTimeout(() => client.writeCoil(1, 0, false), 500);
       });
-=======
-      try {
-        await client.writeCoil(1, true);
-        setTimeout(() => {
-          if (isConnected) client.writeCoil(1, false).catch(e => console.error(e));
-        }, 500);
-      } catch (e) {
-        console.error('Erreur écriture:', e.message);
-      }
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
     }
   });
 
   socket.on('simulate_exit', async () => {
     if (isConnected) {
       console.log('Envoi commande: Pulse Coil 2');
-<<<<<<< HEAD
       client.writeCoil(1, 1, true, () => {
         setTimeout(() => client.writeCoil(1, 1, false), 500);
       });
-=======
-      try {
-        await client.writeCoil(2, true);
-        setTimeout(() => {
-          if (isConnected) client.writeCoil(2, false).catch(e => console.error(e));
-        }, 500);
-      } catch (e) {
-        console.error('Erreur écriture:', e.message);
-      }
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
     }
   });
 });

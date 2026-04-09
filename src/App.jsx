@@ -11,15 +11,7 @@ const MAX_CAPACITY = 10;
 const SCAN_RATE_MS = 100; 
 const TRAVEL_TIME_S = 5;
 const POSITION_INCREMENT = 100 / (TRAVEL_TIME_S * 1000 / SCAN_RATE_MS);
-<<<<<<< HEAD
 const WS_URL = `http://${window.location.hostname}:3001`;
-=======
-
-// URL WebSocket backend — fonctionne en dev local ET sur RPi
-const WS_URL = `http://${window.location.hostname}:3001`;
-
-// ─── COMPOSANT PRINCIPAL ───────────────────────────────────────────────────
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
 
 const App = () => {
   // --- ÉTATS ---
@@ -94,64 +86,7 @@ const App = () => {
     return () => clearInterval(interval);
   }, [isSimulationMode]);
 
-<<<<<<< HEAD
   // ─── ACTIONS ─────────────────────────────────────────────────────────────
-=======
-  // ─── WEBSOCKET (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
-
-  const closeWS = useCallback(() => {
-    if (wsRef.current) {
-      wsRef.current.disconnect();
-      wsRef.current = null;
-    }
-    setModbusConnected(false);
-    setConnectedIp(null);
-  }, []);
-
-  useEffect(() => {
-    if (isSimulationMode) return;
-
-    const socket = io(WS_URL);
-    wsRef.current = socket;
-
-    socket.on('connect', () => {
-      setConnectionError(null);
-    });
-
-    socket.on('modbus_status', (data) => {
-      setModbusConnected(data.connected);
-      if (data.connected) {
-        setConnecting(false);
-      }
-    });
-
-    socket.on('modbus_data', (data) => {
-      setMotorActive(data.motorRunning);
-      setEntrySensorActive(data.sensorEntry);
-      setExitSensorActive(data.sensorExit);
-      
-      // Update basic counters directly if they exist in the server data
-      if (data.cansCount !== undefined) {
-         // Not directly mapping to cansOnConveyor layout unless server formats it
-      }
-    });
-
-    socket.on('connect_error', (err) => {
-      setConnectionError(`Serveur backend inaccessible. Lancez : npm run server. Erreur: ${err.message}`);
-    });
-
-    socket.on('disconnect', () => {
-      setModbusConnected(false);
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [isSimulationMode]);
-
-  // ─── ACTIONS OPÉRATEUR HMI ───────────────────────────────────────────────
-
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
   const addCan = () => {
     if (isSimulationMode) {
       if (cansOnConveyor.length >= MAX_CAPACITY) return;
@@ -159,11 +94,7 @@ const App = () => {
       setCansOnConveyor(prev => [...prev, { id: Math.random(), position: 0, label: `SIM-${Math.floor(Math.random()*900)}` }]);
       setTimeout(() => setEntrySensorActive(false), 300);
     } else {
-<<<<<<< HEAD
       socketRef.current?.emit('simulate_entry');
-=======
-      wsRef.current?.emit('simulate_entry');
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
     }
   };
 
@@ -176,46 +107,10 @@ const App = () => {
         return prev.filter((_, i) => i !== idx);
       });
     } else {
-<<<<<<< HEAD
       socketRef.current?.emit('simulate_exit');
     }
   };
 
-=======
-      wsRef.current?.emit('simulate_exit');
-    }
-  };
-
-  // ─── GESTION BASCULE MODE ────────────────────────────────────────────────
-
-  const switchToSimulation = () => {
-    closeWS();
-    setIsSimulationMode(true);
-    setConnectionError(null);
-    setConnecting(false);
-    setMotorActive(false);
-    setCansOnConveyor([]);
-    setEntrySensorActive(false);
-    setExitSensorActive(false);
-  };
-
-  const openIpModal = () => {
-    setConnectionError(null);
-    setShowIpModal(true);
-  };
-
-  const confirmConnect = () => {
-    if (!espIpInput.trim()) return;
-    setShowIpModal(false);
-    setConnecting(true);
-    setConnectionError(null);
-    setIsSimulationMode(false);
-    // Since server.js currently expects a fixed IP, the UI ip input might not 
-    // dynamically change the server's ESP IP without a backend route update.
-    // We rely on the socket.io auto connect here.
-  };
-
->>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
   const isAtFullStop = exitSensorActive && cansOnConveyor.length > 0;
 
   return (
