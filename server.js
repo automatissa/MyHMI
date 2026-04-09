@@ -145,15 +145,9 @@ async function disconnectFromESP() {
 
 async function readESPState() {
   try {
-<<<<<<< HEAD
-    // Lecture HR0–HR14 (15 Holding Registers)
-    const response = await modbusClient.readHoldingRegisters(0, NUM_REGS);
-    const d = response.response.body.valuesAsArray;
-=======
     // Lecture HR0–HR79 (convoyeur + jus)
     const result = await modbusClient.readHoldingRegisters(0, NUM_REGS);
     const d = result.data;
->>>>>>> fc13afd (Add juice dispenser module with real Modbus mode)
 
     const canCount = d[HR_CAN_COUNT];
 
