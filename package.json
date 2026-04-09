@@ -12,11 +12,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "lucide-react": "^0.577.0",
-    "modbus-serial": "^8.0.23",
+    "modbus-serial": "^8.0.25",
     "modbus-tcp": "^0.4.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+<<<<<<< HEAD
+=======
+    "socket.io": "^4.8.3",
+>>>>>>> c9114ad8a3e29878f4baef2116ecd04f7cd27ccc
     "socket.io-client": "^4.8.3",
     "ws": "^8.18.2"
   },
@@ -24,12 +30,12 @@
     "@eslint/js": "^9.39.1",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
-    "vite": "^7.3.1"
+    "vite": "^5.4.11"
   }
 }
