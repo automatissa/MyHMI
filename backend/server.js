@@ -77,8 +77,8 @@ io.on('connection', (socket) => {
     if (isConnected) {
       console.log('Envoi commande: Pulse Coil 1');
       // Ecriture Coil : writeCoil(unitID, address, value, callback)
-      client.writeCoil(1, 1, true, () => {
-        setTimeout(() => client.writeCoil(1, 1, false), 500);
+      client.writeCoil(1, 0, true, () => {
+        setTimeout(() => client.writeCoil(1, 0, false), 500);
       });
     }
   });
@@ -86,8 +86,8 @@ io.on('connection', (socket) => {
   socket.on('simulate_exit', () => {
     if (isConnected) {
       console.log('Envoi commande: Pulse Coil 2');
-      client.writeCoil(1, 2, true, () => {
-        setTimeout(() => client.writeCoil(1, 2, false), 500);
+      client.writeCoil(1, 1, true, () => {
+        setTimeout(() => client.writeCoil(1, 1, false), 500);
       });
     }
   });
