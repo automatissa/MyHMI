@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { io } from 'socket.io-client';
 import {
   Play, Square, Package, ArrowRight, Wifi, WifiOff,
   AlertCircle, Hand, Activity, Gauge, Radio, MonitorSpeaker, X, Loader
@@ -12,7 +13,7 @@ const TRAVEL_TIME_S      = 5;
 const POSITION_INCREMENT = 100 / (TRAVEL_TIME_S * 1000 / SCAN_RATE_MS);
 
 // URL WebSocket backend — fonctionne en dev local ET sur RPi
-const WS_URL = `ws://${window.location.hostname}:3001`;
+const WS_URL = `http://${window.location.hostname}:3001`;
 
 // ─── COMPOSANT PRINCIPAL ───────────────────────────────────────────────────
 
@@ -69,8 +70,7 @@ const App = () => {
 
   const closeWS = useCallback(() => {
     if (wsRef.current) {
-      wsRef.current.onclose = null;
-      wsRef.current.close();
+      wsRef.current.disconnect();
       wsRef.current = null;
     }
     setModbusConnected(false);
@@ -80,51 +80,41 @@ const App = () => {
   useEffect(() => {
     if (isSimulationMode) return;
 
-    let ws;
-    try {
-      ws = new WebSocket(WS_URL);
-    } catch (err) {
-      setConnectionError(`Impossible d'ouvrir WebSocket : ${err.message}`);
-      return;
-    }
+    const socket = io(WS_URL);
+    wsRef.current = socket;
 
-    wsRef.current = ws;
+    socket.on('connect', () => {
+      setConnectionError(null);
+    });
 
-    ws.onopen = () => setConnectionError(null);
-
-    ws.onmessage = (event) => {
-      let msg;
-      try { msg = JSON.parse(event.data); } catch { return; }
-
-      if (msg.type === 'state') {
-        const s = msg.data;
-        setMotorActive(s.motorActive);
-        setCansOnConveyor(s.cansOnConveyor ?? []);
-        setTotalCounter(s.totalCounter);
-        setEntrySensorActive(s.entrySensorActive);
-        setExitSensorActive(s.exitSensorActive);
-        setModbusConnected(s.connected);
-        setConnectedIp(s.espIp);
-        if (connecting && s.connected) setConnecting(false);
-      }
-      if (msg.type === 'connect_result') {
+    socket.on('modbus_status', (data) => {
+      setModbusConnected(data.connected);
+      if (data.connected) {
         setConnecting(false);
-        if (!msg.success) setConnectionError(`Échec Modbus : ${msg.error}`);
       }
-      if (msg.type === 'error') {
-        setConnectionError(msg.message);
+    });
+
+    socket.on('modbus_data', (data) => {
+      setMotorActive(data.motorRunning);
+      setEntrySensorActive(data.sensorEntry);
+      setExitSensorActive(data.sensorExit);
+      
+      // Update basic counters directly if they exist in the server data
+      if (data.cansCount !== undefined) {
+         // Not directly mapping to cansOnConveyor layout unless server formats it
       }
-    };
+    });
 
-    ws.onclose = () => setModbusConnected(false);
+    socket.on('connect_error', (err) => {
+      setConnectionError(`Serveur backend inaccessible. Lancez : npm run server. Erreur: ${err.message}`);
+    });
 
-    ws.onerror = () => {
-      setConnectionError('Serveur backend inaccessible. Lancez : npm run server');
-    };
+    socket.on('disconnect', () => {
+      setModbusConnected(false);
+    });
 
     return () => {
-      ws.onclose = null;
-      ws.close();
+      socket.disconnect();
     };
   }, [isSimulationMode]);
 
@@ -140,7 +130,7 @@ const App = () => {
       ]);
       setTimeout(() => setEntrySensorActive(false), 300);
     } else {
-      wsRef.current?.send(JSON.stringify({ type: 'addCan' }));
+      wsRef.current?.emit('simulate_entry');
     }
   };
 
@@ -156,14 +146,13 @@ const App = () => {
         return next;
       });
     } else {
-      wsRef.current?.send(JSON.stringify({ type: 'retrieveCan' }));
+      wsRef.current?.emit('simulate_exit');
     }
   };
 
   // ─── GESTION BASCULE MODE ────────────────────────────────────────────────
 
   const switchToSimulation = () => {
-    wsRef.current?.send(JSON.stringify({ type: 'disconnect' }));
     closeWS();
     setIsSimulationMode(true);
     setConnectionError(null);
@@ -185,10 +174,9 @@ const App = () => {
     setConnecting(true);
     setConnectionError(null);
     setIsSimulationMode(false);
-    // Délai pour laisser le useEffect WebSocket s'ouvrir avant d'envoyer la commande
-    setTimeout(() => {
-      wsRef.current?.send(JSON.stringify({ type: 'connect', ip: espIpInput.trim() }));
-    }, 500);
+    // Since server.js currently expects a fixed IP, the UI ip input might not 
+    // dynamically change the server's ESP IP without a backend route update.
+    // We rely on the socket.io auto connect here.
   };
 
   const isAtFullStop = exitSensorActive && cansOnConveyor.length > 0;
