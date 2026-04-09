@@ -5,11 +5,14 @@ import ModbusRTU from 'modbus-serial';
 import cors from 'cors';
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));
 
 const server = http.createServer(app);
 const io = new SocketIOServer(server, {
-  cors: { origin: '*' }
+  cors: { 
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
 // Initialisation du client Modbus TCP
