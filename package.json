@@ -16,6 +16,7 @@
     "express": "^5.2.1",
     "lucide-react": "^0.577.0",
     "modbus-serial": "^8.0.23",
+    "modbus-tcp": "^0.4.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "socket.io": "^4.8.3",
