@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import {
   Play, Square, Package, ArrowRight, Wifi, WifiOff,
-  AlertCircle, Hand, Activity, Gauge, Radio, MonitorSpeaker, X, Loader
+  AlertCircle, Hand, Activity, Gauge, Radio, MonitorSpeaker, Loader
 } from 'lucide-react';
 
 // ─── CONSTANTES PLC ────────────────────────────────────────────────────────
@@ -64,9 +64,7 @@ const App = () => {
     return () => clearInterval(interval);
   }, [isSimulationMode]);
 
-  // ─── SOCKET.IO (Mode Réel — pont vers ESP32 Modbus TCP) ─────────────────
-
-  // ─── AUTO-CONNEXION MODBUS (Pas de Modal, Connexion Directe) ─────────────
+  // ─── SOCKET.IO — MODE RÉEL ───────────────────────────────────────────────
 
   useEffect(() => {
     if (isSimulationMode) return;
@@ -74,7 +72,14 @@ const App = () => {
     setConnecting(true);
     setConnectionError(null);
 
-    const socket = io(WS_URL, { transports: ['websocket'] });
+    // polling en premier (toujours dispo), upgrade WebSocket ensuite
+    // → compatible Firefox sans configuration spéciale
+    const socket = io(WS_URL, {
+      transports: ['polling', 'websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
@@ -85,11 +90,17 @@ const App = () => {
     socket.on('disconnect', () => {
       setModbusConnected(false);
       setConnectedIp(null);
+      setCansOnConveyor([]);
+      setMotorActive(false);
     });
 
     socket.on('connect_error', () => {
       setConnectionError('Serveur backend inaccessible. Lancez : npm run server');
       setConnecting(false);
+    });
+
+    socket.on('esp32_discovered', (data) => {
+      setConnectedIp(data.ip);
     });
 
     socket.on('modbus_data', (data) => {
@@ -98,11 +109,24 @@ const App = () => {
       setExitSensorActive(data.sensorExit);
       setTotalCounter(data.cansOut);
       setModbusConnected(true);
-      setConnectedIp('ESP32 @ 192.168.1.100');
+
+      // Reconstruction des canettes depuis les positions Modbus (HR5–HR14)
+      if (Array.isArray(data.canPositions)) {
+        setCansOnConveyor(data.canPositions.map((pos, i) => ({
+          id: i,
+          position: pos,
+          label: `CAN-${i + 1}`,
+        })));
+      }
     });
 
     socket.on('modbus_status', (status) => {
       setModbusConnected(status.connected);
+      if (status.ip) setConnectedIp(status.ip);
+      if (!status.connected) {
+        setCansOnConveyor([]);
+        setMotorActive(false);
+      }
     });
 
     return () => {
@@ -151,8 +175,11 @@ const App = () => {
     setIsSimulationMode(true);
     setConnectionError(null);
     setConnecting(false);
+    setModbusConnected(false);
+    setConnectedIp(null);
     setMotorActive(false);
     setCansOnConveyor([]);
+    setTotalCounter(0);
     setEntrySensorActive(false);
     setExitSensorActive(false);
   };
@@ -168,8 +195,6 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
-
-
 
       {/* HEADER HMI */}
       <header className="w-full mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
@@ -237,7 +262,7 @@ const App = () => {
             onClick={() => {
               setConnectionError(null);
               setConnecting(true);
-              // Retry connection
+              socketRef.current?.connect();
             }}
             className="text-[10px] underline opacity-70 hover:opacity-100"
           >
@@ -434,7 +459,7 @@ const App = () => {
               <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">
                 {isSimulationMode
                   ? 'Mode Simulation — Logique PLC exécutée localement dans le navigateur'
-                  : `Mode Réel — Données Modbus Holding Registers depuis ESP32 @ ${connectedIp ?? '…'} · Poll 40ms`
+                  : `Mode Réel — Données Modbus Holding Registers depuis ESP32 @ ${connectedIp ?? '…'} · Poll 100ms`
                 }
               </p>
             </div>
