@@ -30,12 +30,21 @@ const App = () => {
   const [exitSensorActive,  setExitSensorActive]   = useState(false);
 
   // --- ÉTAT CONNEXION (Mode Réel) ---
-  const [modbusConnected, setModbusConnected] = useState(false);
-  const [connectedIp,     setConnectedIp]     = useState(null);
-  const [connecting,      setConnecting]      = useState(false);
-  const [connectionError, setConnectionError] = useState(null);
+  const [modbusConnected,  setModbusConnected]  = useState(false);
+  const [connectedIp,      setConnectedIp]      = useState(null);
+  const [connecting,       setConnecting]       = useState(false);
+  const [connectionError,  setConnectionError]  = useState(null);
+  const [manualIp,         setManualIp]         = useState('192.168.137.179');
+  const [manualConnecting, setManualConnecting] = useState(false);
 
   const socketRef = useRef(null);
+
+  const connectManual = () => {
+    if (!manualIp.trim() || !socketRef.current || manualConnecting) return;
+    setManualConnecting(true);
+    socketRef.current.emit('connect_esp32', { ip: manualIp.trim() });
+    setTimeout(() => setManualConnecting(false), 5000);
+  };
 
   // ─── LOGIQUE PLC SIMULATION (navigateur) ────────────────────────────────
 
@@ -72,8 +81,6 @@ const App = () => {
     setConnecting(true);
     setConnectionError(null);
 
-    // polling en premier (toujours dispo), upgrade WebSocket ensuite
-    // → compatible Firefox sans configuration spéciale
     const socket = io(WS_URL, {
       transports: ['polling', 'websocket'],
       reconnection: true,
@@ -110,7 +117,6 @@ const App = () => {
       setTotalCounter(data.cansOut);
       setModbusConnected(true);
 
-      // Reconstruction des canettes depuis les positions Modbus (HR5–HR14)
       if (Array.isArray(data.canPositions)) {
         setCansOnConveyor(data.canPositions.map((pos, i) => ({
           id: i,
@@ -122,6 +128,7 @@ const App = () => {
 
     socket.on('modbus_status', (status) => {
       setModbusConnected(status.connected);
+      setManualConnecting(false);
       if (status.ip) setConnectedIp(status.ip);
       if (!status.connected) {
         setCansOnConveyor([]);
@@ -268,6 +275,34 @@ const App = () => {
           >
             Réessayer
           </button>
+        </div>
+      )}
+
+      {/* CONNEXION MANUELLE — si UDP bloqué par le pare-feu */}
+      {!isSimulationMode && !modbusConnected && !connectionError && (
+        <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center gap-3 bg-blue-500/10 border border-blue-500/30 p-4 rounded-2xl text-blue-300">
+          <Wifi size={18} className="shrink-0 mt-0.5 sm:mt-0" />
+          <div className="flex-1">
+            <p className="text-xs font-bold">En attente d'annonce UDP de l'ESP32</p>
+            <p className="text-[11px] opacity-70">Si le pare-feu Windows bloque le port 5001, entrez l'IP manuellement :</p>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <input
+              type="text"
+              value={manualIp}
+              onChange={e => setManualIp(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && connectManual()}
+              placeholder="192.168.x.x"
+              className="bg-slate-800 border border-slate-600 text-slate-100 text-xs font-mono px-3 py-2 rounded-xl w-40 focus:outline-none focus:border-blue-400"
+            />
+            <button
+              onClick={connectManual}
+              disabled={manualConnecting}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl transition-all active:scale-95 flex items-center gap-1.5"
+            >
+              {manualConnecting ? <><Loader size={11} className="animate-spin" /> Tentative…</> : 'Connecter'}
+            </button>
+          </div>
         </div>
       )}
 

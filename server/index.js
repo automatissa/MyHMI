@@ -13,12 +13,10 @@ const app = express();
 app.use(cors());
 
 // ─── FRONTEND STATIQUE (production) ─────────────────────────────────────────
-// Sert le build React depuis dist/ — aucun nginx requis sur la RPi.
-// En dev, Vite sert lui-même le frontend sur :5173.
 const distPath = join(__dirname, '../dist');
 app.use(express.static(distPath));
 // Fallback SPA : toute route inconnue renvoie index.html
-app.get('*', (_req, res) => {
+app.get('/{*path}', (_req, res) => {
   res.sendFile(join(distPath, 'index.html'));
 });
 
@@ -71,7 +69,6 @@ async function connectModbus(ip) {
 }
 
 // ─── DÉCOUVERTE UDP — ESP32 annonce son IP au démarrage ─────────────────────
-// L'ESP32 envoie "ESP32_IP:<son_ip>" en UDP sur le port 5001 du gateway (RPi).
 const udpServer = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
 udpServer.on('message', (msg, rinfo) => {
@@ -84,9 +81,7 @@ udpServer.on('message', (msg, rinfo) => {
 
     const ipChanged = ip !== esp32IP;
     if (ipChanged || !isConnected) {
-      // Annuler le retry en cours et connecter immédiatement
       if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-      // Si IP différente, forcer même si connecting est en cours
       if (ipChanged) connecting = false;
       connectModbus(ip);
     }
@@ -103,13 +98,11 @@ udpServer.bind(5001, '0.0.0.0', () => {
 });
 
 // ─── BOUCLE LECTURE MODBUS (100 ms) ─────────────────────────────────────────
-// Guard isReading pour éviter les lectures concurrentes si une lecture dépasse 100ms
 setInterval(async () => {
   if (!isConnected || !esp32IP || isReading) return;
   isReading = true;
 
   try {
-    // HR0–HR14 : 15 registres (motor, sensors, count, total, 10 positions)
     const data = await client.readHoldingRegisters(0, 15);
     const r    = data.data;
 
@@ -145,9 +138,17 @@ setInterval(async () => {
 io.on('connection', (socket) => {
   console.log('[WS] Nouvelle connexion IHM');
 
-  // État courant → nouveau client
   socket.emit('modbus_status', { connected: isConnected, ip: esp32IP });
   if (esp32IP) socket.emit('esp32_discovered', { ip: esp32IP });
+
+  // Connexion manuelle si UDP bloqué (pare-feu Windows, etc.)
+  socket.on('connect_esp32', ({ ip }) => {
+    if (!ip) return;
+    if (connecting || (isConnected && ip === esp32IP)) return;
+    console.log(`[WS] Connexion manuelle demandée → ${ip}`);
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    connectModbus(ip);
+  });
 
   socket.on('simulate_entry', async () => {
     if (!isConnected) return;
