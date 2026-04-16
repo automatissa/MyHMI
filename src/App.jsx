@@ -2,15 +2,18 @@ import { useState } from 'react';
 import ConvoyeurCanettes from './convoyeur/ConvoyeurCanettes.jsx';
 import DistributeurJus from './distributeur_jus/DistributeurJus.jsx';
 import TrieuseCaisses from './trieuse_caisse/TrieuseCaisse.jsx';
-import { Package, Droplets, MonitorSpeaker, Zap } from 'lucide-react';
+import Lampe from './lampe/Lampe.jsx';
+import { Package, Droplets, MonitorSpeaker, Zap, Lightbulb } from 'lucide-react';
 
 const SCREENS = {
   convoyeur: 'convoyeur',
   jus: 'jus',
   tri: 'tri',
+  lampe: 'lampe',
 };
 export default function App() {
   const [screen, setScreen] = useState(SCREENS.convoyeur);
+  const [lampState, setLampState] = useState(false);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -65,6 +68,18 @@ export default function App() {
               Tri Caisses
             </button>
 
+            <button
+              onClick={() => setScreen(SCREENS.lampe)}
+              className={`flex items-center gap-2 px-5 py-3 rounded-xl transition-all font-medium text-sm ${
+                screen === SCREENS.lampe
+                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+              }`}
+            >
+              <Lightbulb size={18} />
+              Lampe
+            </button>
+
           </div>
         </div>
       </nav>
@@ -74,6 +89,14 @@ export default function App() {
         {screen === SCREENS.convoyeur && <ConvoyeurCanettes />}
         {screen === SCREENS.jus && <DistributeurJus />}
         {screen === SCREENS.tri && <TrieuseCaisses />}
+        {screen === SCREENS.lampe && (
+          <Lampe 
+            lampState={lampState} 
+            onToggleLamp={() => setLampState(!lampState)}
+            isSimulationMode={true}
+            modbusConnected={false}
+          />
+        )}
       </main>
     </div>
   );
