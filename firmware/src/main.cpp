@@ -17,6 +17,7 @@ const int PIN_LED_WIFI   = 2;    // LED built-in — indicateur statut Wi-Fi
 const int PIN_SENSOR_IN  = 34;   // Entrée — capteur inductif entrée convoyeur
 const int PIN_SENSOR_OUT = 35;   // Entrée — capteur inductif sortie convoyeur
 const int PIN_MOTOR_OUT  = 4;    // Sortie — contacteur moteur (GPIO 4 en usine)
+const int PIN_LAMP       = 5;    // Sortie — lampe
 //  ⚠ GPIO 2 réservé à la LED Wi-Fi. En usine, moteur sur GPIO 4.
 
 // ─── MODBUS HOLDING REGISTERS ─────────────────────────────────────────────
@@ -31,13 +32,15 @@ const int HR_SENSOR_IN  = 1;
 const int HR_SENSOR_OUT = 2;
 const int HR_CAN_COUNT  = 3;
 const int HR_TOTAL      = 4;
-const int HR_POS_BASE   = 5;
+const int HR_POS_BASE   = 5; // jusqu'à 14 inclus
+const int HR_LAMP       = 15;
 
 // ─── MODBUS COILS (commandes HMI) ─────────────────────────────────────────
 //  C0 → Ajouter canette   (pulse depuis IHM)
 //  C1 → Récupérer canette (pulse depuis IHM)
 const int COIL_ADD_CAN      = 0;
 const int COIL_RETRIEVE_CAN = 1;
+const int COIL_LAMP         = 2; // Commande lampe
 
 // ─── CONSTANTES PLC ───────────────────────────────────────────────────────
 const int   MAX_CANS       = 10;
@@ -123,6 +126,7 @@ void setup() {
 
   pinMode(PIN_LED_WIFI,  OUTPUT);
   pinMode(PIN_MOTOR_OUT, OUTPUT);
+  pinMode(PIN_LAMP,      OUTPUT);
   if (PIN_USE_PHYSICAL_SENSORS) {
     pinMode(PIN_SENSOR_IN,  INPUT_PULLDOWN);
     pinMode(PIN_SENSOR_OUT, INPUT_PULLDOWN);
@@ -170,8 +174,10 @@ void loop() {
     Serial.println("[WiFi] Connecté — IP : " + WiFi.localIP().toString());
     mb.server();
     for (int i = 0; i < HR_POS_BASE + MAX_CANS; i++) mb.addHreg(i, 0);
+    mb.addHreg(HR_LAMP, 0);
     mb.addCoil(COIL_ADD_CAN,      false);
     mb.addCoil(COIL_RETRIEVE_CAN, false);
+    mb.addCoil(COIL_LAMP,         false);
     modbusStarted = true;
     Serial.println("[Modbus] Serveur TCP prêt sur le port 502");
 
@@ -211,6 +217,9 @@ void loop() {
   // ── 2. COMMANDES IHM (front montant coils) ───────────────────────────
   bool coilAdd      = mb.Coil(COIL_ADD_CAN);
   bool coilRetrieve = mb.Coil(COIL_RETRIEVE_CAN);
+  bool coilLamp     = mb.Coil(COIL_LAMP);
+  
+  digitalWrite(PIN_LAMP, coilLamp ? HIGH : LOW);
 
   if ((coilAdd && !prevCoilAdd) || sensorIn)           { addCan();      sensorIn  = false; }
   if ((coilRetrieve && !prevCoilRetrieve) || sensorOut) { retrieveCan(); sensorOut = false; }
@@ -241,6 +250,7 @@ void loop() {
   mb.Hreg(HR_SENSOR_OUT, sensorOut    ? 1 : 0);
   mb.Hreg(HR_CAN_COUNT,  canCount);
   mb.Hreg(HR_TOTAL,      totalOut);
+  mb.Hreg(HR_LAMP,       coilLamp     ? 1 : 0);
 
   int slot = 0;
   for (int i = 0; i < MAX_CANS; i++) {

@@ -103,7 +103,7 @@ setInterval(async () => {
   isReading = true;
 
   try {
-    const data = await client.readHoldingRegisters(0, 15);
+    const data = await client.readHoldingRegisters(0, 16);
     const r    = data.data;
 
     const canCount     = r[3];
@@ -119,6 +119,7 @@ setInterval(async () => {
       cansCount:    canCount,
       cansOut:      r[4],
       canPositions,
+      lampOn:       r[15] === 1,
     });
 
   } catch (e) {
@@ -166,6 +167,14 @@ io.on('connection', (socket) => {
       await client.writeCoil(1, true);
       setTimeout(() => { if (isConnected) client.writeCoil(1, false).catch(() => {}); }, 300);
     } catch (e) { console.error('[Coil] Erreur exit:', e.message); }
+  });
+
+    socket.on('toggle_lamp', async (state) => {
+    if (!isConnected) return;
+    console.log(`[Coil] Lampe → Coil 2 (COIL_LAMP) : ${state}`);
+    try {
+      await client.writeCoil(2, !!state);
+    } catch (e) { console.error('[Coil] Erreur lamp:', e.message); }
   });
 });
 

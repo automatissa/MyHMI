@@ -21,6 +21,7 @@ const App = () => {
 
   // --- MODE ---
   const [isSimulationMode, setIsSimulationMode] = useState(true);
+  const [currentPage, setCurrentPage] = useState('conveyor'); // 'conveyor' | 'lamp'
 
   // --- ÉTAT SYSTÈME (miroir des registres Modbus ESP32) ---
   const [motorActive,       setMotorActive]       = useState(false);
@@ -28,6 +29,7 @@ const App = () => {
   const [totalCounter,      setTotalCounter]       = useState(0);
   const [entrySensorActive, setEntrySensorActive]  = useState(false);
   const [exitSensorActive,  setExitSensorActive]   = useState(false);
+  const [lampState,         setLampState]          = useState(false);
 
   // --- ÉTAT CONNEXION (Mode Réel) ---
   const [modbusConnected,  setModbusConnected]  = useState(false);
@@ -116,6 +118,7 @@ const App = () => {
       setExitSensorActive(data.sensorExit);
       setTotalCounter(data.cansOut);
       setModbusConnected(true);
+      setLampState(data.lampOn);
 
       if (Array.isArray(data.canPositions)) {
         setCansOnConveyor(data.canPositions.map((pos, i) => ({
@@ -198,13 +201,25 @@ const App = () => {
 
   const isAtFullStop = exitSensorActive && cansOnConveyor.length > 0;
 
+  const toggleLamp = () => {
+    const newState = !lampState;
+    if (isSimulationMode) {
+      setLampState(newState);
+    } else {
+      // Pas de mise à jour optimiste ici :
+      // L'interface attendra que le backend confirme via `modbus_data` 
+      // que le registre de l'ESP32 est bien mis à jour.
+      socketRef.current?.emit('toggle_lamp', newState);
+    }
+  };
+
   // ─── RENDU ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans p-4 md:p-8">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col p-4 md:p-8">
 
       {/* HEADER HMI */}
-      <header className="w-full mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
+      <header className="w-full mb-4 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-6">
         <div className="flex items-center gap-4">
           <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-900/20">
             <Activity size={24} className="text-white" />
@@ -215,6 +230,22 @@ const App = () => {
               Digital Twin : ESP32 WROOM / Modbus TCP
             </p>
           </div>
+        </div>
+
+        {/* NAVIGATION PAGE */}
+        <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
+          <button
+            onClick={() => setCurrentPage('conveyor')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentPage === 'conveyor' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Convoyeur
+          </button>
+          <button
+            onClick={() => setCurrentPage('lamp')}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${currentPage === 'lamp' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-slate-200'}`}
+          >
+            Lampe
+          </button>
         </div>
 
         {/* ZONE MODE + STATUT */}
@@ -306,6 +337,7 @@ const App = () => {
         </div>
       )}
 
+      {currentPage === 'conveyor' && (
       <main className="w-full grid grid-cols-1 lg:grid-cols-4 gap-6">
 
         {/* STATUTS PLC */}
@@ -501,6 +533,39 @@ const App = () => {
           </div>
         </div>
       </main>
+      )}
+
+      {currentPage === 'lamp' && (
+        <main className="w-full flex-1 flex flex-col items-center mt-12 gap-8">
+          <div className="bg-slate-900 rounded-[3rem] p-12 border border-slate-800 flex flex-col items-center shadow-2xl">
+            <div className={`w-40 h-40 rounded-full border-4 shadow-2xl mb-8 transition-all duration-500 flex items-center justify-center ${
+              lampState 
+                ? 'bg-amber-400 border-amber-300 shadow-amber-500/50' 
+                : 'bg-slate-800 border-slate-700 shadow-none'
+            }`}>
+              <span className="text-6xl opacity-90">{lampState ? '💡' : '🌑'}</span>
+            </div>
+
+            <button
+              onClick={toggleLamp}
+              disabled={!isSimulationMode && !modbusConnected}
+              className={`px-8 py-4 rounded-2xl w-full font-black text-xl tracking-wider transition-all active:scale-95 ${
+                lampState
+                  ? 'bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/20'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-lg shadow-emerald-500/20'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {lampState ? 'Éteindre' : 'Allumer'}
+            </button>
+            
+            <p className="text-slate-500 mt-8 font-mono text-sm max-w-sm text-center bg-slate-950 p-4 rounded-xl border border-slate-800">
+              Pilotage : <span className="text-blue-400">Coil 2</span><br/>
+              État : <span className="text-blue-400">HR 15</span><br/>
+              Sortie ESP32 : <span className="text-blue-400">GPIO 5</span>
+            </p>
+          </div>
+        </main>
+      )}
 
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes scroll {
