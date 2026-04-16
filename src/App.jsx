@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import ConvoyeurCanettes from './convoyeur/ConvoyeurCanettes.jsx';
 import DistributeurJus from './distributeur_jus/DistributeurJus.jsx';
-import { Package, Droplets, MonitorSpeaker } from 'lucide-react';
+import TrieuseCaisses from './trieuse_caisse/TrieuseCaisse.jsx';
+import { Package, Droplets, MonitorSpeaker, Zap } from 'lucide-react';
 
 const SCREENS = {
   convoyeur: 'convoyeur',
   jus: 'jus',
+  tri: 'tri',
 };
-
 export default function App() {
   const [screen, setScreen] = useState(SCREENS.convoyeur);
 
@@ -50,14 +51,29 @@ export default function App() {
               <Droplets size={18} />
               Distributeur Jus
             </button>
+
+            <button
+              onClick={() => setScreen(SCREENS.tri)}
+              className={`flex items-center gap-2 px-5 py-3 rounded-xl transition-all font-medium text-sm ${
+                screen === SCREENS.tri
+                  ? 'bg-purple-600 text-white shadow-lg shadow-purple-900/30'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+              }`}
+            >
+            
+              <Zap size={18} />
+              Tri Caisses
+            </button>
+
           </div>
         </div>
       </nav>
 
-      {/* CONTENU */}
+            {/* CONTENU */}
       <main className="p-4 md:p-8">
         {screen === SCREENS.convoyeur && <ConvoyeurCanettes />}
         {screen === SCREENS.jus && <DistributeurJus />}
+        {screen === SCREENS.tri && <TrieuseCaisses />}
       </main>
     </div>
   );
