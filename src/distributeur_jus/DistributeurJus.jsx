@@ -1,16 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   Droplets, Plus, Minus, Radio, Wifi, WifiOff, AlertCircle, Gauge,
-  MonitorSpeaker, X, Loader, Beaker
+  MonitorSpeaker, X, Loader, Beaker, Coffee
 } from 'lucide-react';
 
-const MAX_JUICES = 12;
-const GLASS_CAPACITY_ML = 250;
-const JUICE_COLORS = [
-  'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-green-500',
-  'bg-cyan-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500',
-  'bg-amber-500', 'bg-lime-500', 'bg-indigo-500', 'bg-fuchsia-500'
-];
+const MAX_JUICES = 3;
+const BOTTLE_CAPACITY_ML = 500;
+const JUICE_NAMES = ['Café', 'Chocolat', 'Lait'];
+const JUICE_COLORS = ['#8B4513', '#6B3410', '#F5F5F5'];
+const JUICE_COLORS_BG = ['bg-amber-900', 'bg-amber-900', 'bg-slate-100'];
 
 const WS_URL = `ws://${window.location.hostname}:3001`;
 
@@ -19,11 +17,12 @@ export default function DistributeurJus() {
   const [showIpModal, setShowIpModal] = useState(false);
   const [espIpInput, setEspIpInput] = useState('192.168.4.1');
 
-  const [juiceCount, setJuiceCount] = useState(0);
-  const [stock, setStock] = useState([]);
-  const [glass, setGlass] = useState([]);
-  const [glassTotal, setGlassTotal] = useState(0);
-  const [glassCapacity, setGlassCapacity] = useState(GLASS_CAPACITY_ML);
+  const [juiceCount, setJuiceCount] = useState(MAX_JUICES);
+  const [stock, setStock] = useState(Array(MAX_JUICES).fill(1000));
+  const [bottle, setBottle] = useState(Array(MAX_JUICES).fill(0));
+  const [bottleTotal, setBottleTotal] = useState(0);
+  const [bottleCapacity, setBottleCapacity] = useState(BOTTLE_CAPACITY_ML);
+  const [isPourAnimation, setIsPourAnimation] = useState(false);
 
   const [modbusConnected, setModbusConnected] = useState(false);
   const [connectedIp, setConnectedIp] = useState(null);
@@ -34,10 +33,10 @@ export default function DistributeurJus() {
 
   useEffect(() => {
     if (!isSimulationMode) return;
-    setJuiceCount(6);
-    setStock(Array(6).fill(1000));
-    setGlass(Array(6).fill(0));
-    setGlassTotal(0);
+    setJuiceCount(MAX_JUICES);
+    setStock(Array(MAX_JUICES).fill(1000));
+    setBottle(Array(MAX_JUICES).fill(0));
+    setBottleTotal(0);
   }, [isSimulationMode]);
 
   useEffect(() => {
@@ -62,9 +61,9 @@ export default function DistributeurJus() {
         const s = msg.data;
         setJuiceCount(s.juice.n);
         setStock(s.juice.stock ?? []);
-        setGlass(s.juice.glass ?? []);
-        setGlassTotal(s.juice.totalMl ?? 0);
-        setGlassCapacity(s.juice.capacityMl ?? GLASS_CAPACITY_ML);
+        setBottle(s.juice.glass ?? []);
+        setBottleTotal(s.juice.totalMl ?? 0);
+        setBottleCapacity(s.juice.capacityMl ?? BOTTLE_CAPACITY_ML);
         setModbusConnected(s.connected);
         setConnectedIp(s.espIp);
         if (connecting && s.connected) setConnecting(false);
@@ -90,47 +89,39 @@ export default function DistributeurJus() {
   }, [isSimulationMode, connecting]);
 
   const addJuice = () => {
-    if (isSimulationMode) {
-      if (juiceCount >= MAX_JUICES) return;
-      setJuiceCount(prev => prev + 1);
-      setStock(prev => [...prev, 1000]);
-      setGlass(prev => [...prev, 0]);
-    } else {
-      wsRef.current?.send(JSON.stringify({ type: 'juiceStockAdd', index: juiceCount }));
-    }
+    // Toujours exactement 3 jus, pas d'ajout possible
+    return;
   };
 
   const removeJuice = () => {
-    if (isSimulationMode) {
-      if (juiceCount <= 1) return;
-      setJuiceCount(prev => prev - 1);
-      setStock(prev => prev.slice(0, -1));
-      setGlass(prev => prev.slice(0, -1));
-    } else {
-      wsRef.current?.send(JSON.stringify({ type: 'juiceStockSub', index: juiceCount - 1 }));
-    }
+    // Toujours exactement 3 jus, pas de suppression possible
+    return;
   };
 
   const pourJuice = (index) => {
     if (isSimulationMode) {
-      if (index < 0 || index >= juiceCount || stock[index] <= 0 || glassTotal >= glassCapacity) return;
-      const pourAmount = Math.min(50, stock[index], glassCapacity - glassTotal);
+      if (index < 0 || index >= juiceCount || stock[index] <= 0 || bottleTotal >= bottleCapacity) return;
+      setIsPourAnimation(true);
+      const pourAmount = Math.min(50, stock[index], bottleCapacity - bottleTotal);
       const newStock = [...stock];
       newStock[index] -= pourAmount;
-      const newGlass = [...glass];
-      newGlass[index] = (newGlass[index] || 0) + pourAmount;
+      const newBottle = [...bottle];
+      newBottle[index] = (newBottle[index] || 0) + pourAmount;
       setStock(newStock);
-      setGlass(newGlass);
-      setGlassTotal(prev => prev + pourAmount);
+      setBottle(newBottle);
+      setBottleTotal(prev => prev + pourAmount);
+      setTimeout(() => setIsPourAnimation(false), 800);
     } else {
       wsRef.current?.send(JSON.stringify({ type: 'juicePour', index }));
+      setIsPourAnimation(true);
+      setTimeout(() => setIsPourAnimation(false), 800);
     }
   };
 
   const resetGlass = () => {
     if (isSimulationMode) {
-      setGlass(Array(juiceCount).fill(0));
-      setGlassTotal(0);
+      setBottle(Array(juiceCount).fill(0));
+      setBottleTotal(0);
     } else {
       wsRef.current?.send(JSON.stringify({ type: 'juiceResetGlass' }));
     }
@@ -157,8 +148,8 @@ export default function DistributeurJus() {
     wsRef.current?.send(JSON.stringify({ type: 'connect', ip }));
   };
 
-  const glassPercentage = (glassCapacity > 0) ? (glassTotal / glassCapacity) * 100 : 0;
-  const canPour = glassTotal < glassCapacity;
+  const bottlePercentage = (bottleCapacity > 0) ? (bottleTotal / bottleCapacity) * 100 : 0;
+  const canPour = bottleTotal < bottleCapacity;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
@@ -208,8 +199,8 @@ export default function DistributeurJus() {
             <Droplets size={24} className="text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-white uppercase">Distributeur de Jus</h1>
-            <p className="text-slate-500 text-xs font-mono uppercase tracking-widest">Digital Twin : ESP32 WROOM / Modbus TCP — N jus configurables</p>
+            <h1 className="text-2xl font-black tracking-tight text-white uppercase">Machine à Café - 3 Jus</h1>
+            <p className="text-slate-500 text-xs font-mono uppercase tracking-widest">Café, Chocolat, Lait — Modbus TCP Distributeur</p>
           </div>
         </div>
 
@@ -273,31 +264,18 @@ export default function DistributeurJus() {
 
               <div className="space-y-4">
                 <div className="flex flex-col gap-2">
-                  <span className="text-xs text-slate-400">Nombre de jus</span>
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      onClick={removeJuice}
-                      disabled={juiceCount <= 1}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:bg-slate-950 disabled:text-slate-600 transition-colors"
-                    >
-                      <Minus size={18} />
-                    </button>
+                  <span className="text-xs text-slate-400">Configuration fixe</span>
+                  <div className="flex items-center justify-center gap-2">
                     <div className="flex-1 text-center py-3 bg-slate-950 rounded-2xl border border-slate-700 text-2xl font-mono font-bold text-amber-400">
-                      {juiceCount} / {MAX_JUICES}
+                      {MAX_JUICES} jus
                     </div>
-                    <button
-                      onClick={addJuice}
-                      disabled={juiceCount >= MAX_JUICES}
-                      className="p-2 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:bg-slate-800 disabled:text-slate-600 transition-colors"
-                    >
-                      <Plus size={18} />
-                    </button>
                   </div>
+                  <p className="text-[10px] text-slate-500 text-center">Café • Chocolat • Lait</p>
                 </div>
 
                 <div className="p-4 bg-slate-950 rounded-2xl border border-slate-700">
-                  <div className="text-xs text-slate-400 mb-1">Capacité verre</div>
-                  <div className="text-xl font-mono text-cyan-400 font-bold">{glassCapacity} mL</div>
+                  <div className="text-xs text-slate-400 mb-1">Capacité bouteille</div>
+                  <div className="text-xl font-mono text-cyan-400 font-bold">{bottleCapacity} mL</div>
                 </div>
 
                 <div className={`text-[9px] flex items-center gap-1.5 px-3 py-2 rounded-xl border ${
@@ -312,117 +290,173 @@ export default function DistributeurJus() {
             </section>
 
             <section className="bg-slate-900 rounded-3xl p-6 border border-slate-800">
-              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-6">Verre Cocktail</h2>
+              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-6">Machine à café - Bouteille</h2>
               
-              <div className="flex flex-col items-center gap-4">
-                <div className="w-24 h-32 border-8 border-slate-400 rounded-b-3xl rounded-t-md relative bg-gradient-to-b from-slate-900 to-slate-800 shadow-inner">
-                  <div
-                    className="absolute bottom-0 left-0 right-0 rounded-b-2xl transition-all duration-300 opacity-70"
-                    style={{
-                      height: `${glassPercentage}%`,
-                      background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-                      boxShadow: '0 4px 12px rgba(251, 191, 36, 0.4)'
-                    }}
-                  />
+              <div className="flex flex-col items-center gap-6">
+                {/* MACHINE À CAFÉ */}
+                <div className="relative w-44 h-56 mx-auto">
+                  {/* Corps machine */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-slate-700 to-slate-800 rounded-t-3xl rounded-b-lg border-2 border-slate-600 shadow-lg">
+                    {/* Écran/Panneau */}
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 w-32 h-8 bg-slate-900 rounded-lg border border-slate-500 flex items-center justify-center">
+                      <Coffee size={16} className="text-amber-500" />
+                    </div>
+                    
+                    {/* Tuyau de sortie */}
+                    <div className="absolute top-24 left-1/2 -translate-x-1/2 w-2 h-12 bg-gray-400 rounded-full border border-gray-500" />
+                    
+                    {/* Bec verseur avec animation */}
+                    <div className="absolute top-36 left-1/2 -translate-x-1/2 flex flex-col items-center">
+                      <div className="w-3 h-2 bg-gray-400 rounded-full" />
+                      {isPourAnimation && (
+                        <style>{`
+                          @keyframes dropFall {
+                            0% { 
+                              transform: translateY(0);
+                              opacity: 1;
+                            }
+                            100% { 
+                              transform: translateY(24px);
+                              opacity: 0.3;
+                            }
+                          }
+                          .juice-drop {
+                            animation: dropFall 0.8s ease-in infinite;
+                            display: inline-block;
+                          }
+                        `}</style>
+                      )}
+                      {isPourAnimation && (
+                        <div className="juice-drop w-2 h-2 rounded-full mt-1" style={{ backgroundColor: '#8B4513' }} />
+                      )}
+                    </div>
+
+                    {/* Boutons */}
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-3">
+                      <div className="w-3 h-3 rounded-full bg-slate-600 border border-slate-500" />
+                      <div className="w-3 h-3 rounded-full bg-slate-600 border border-slate-500" />
+                    </div>
+                  </div>
                 </div>
 
-                <div className="w-full">
-                  <div className="flex justify-between mb-1">
-                    <span className="text-xs text-slate-400">Volume</span>
-                    <span className="text-xs font-mono text-amber-400 font-bold">{Math.round(glassTotal)} mL</span>
-                  </div>
-                  <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
-                    <div
-                      className="h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-300"
-                      style={{ width: `${glassPercentage}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-slate-500 text-center mt-1">
-                    {Math.round(glassPercentage)}%
-                  </div>
+                {/* GOUTTE D'EAU / TUYAU VERS BOUTEILLE */}
+                <div className="flex justify-center mb-2">
+                  <div className="w-1 h-8 bg-gradient-to-b from-slate-400 to-transparent" />
                 </div>
 
-                <button
-                  onClick={resetGlass}
-                  disabled={glassTotal === 0}
-                  className="w-full py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-bold transition-colors"
-                >
-                  Vider le verre
-                </button>
+                {/* BOUTEILLE */}
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative w-20 h-40">
+                    {/* Goulot bouteille */}
+                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4 h-3 bg-gradient-to-b from-amber-700 to-amber-800 rounded-t-full border border-amber-900" />
+                    
+                    {/* Corps bouteille */}
+                    <div className="absolute top-3 left-1/2 -translate-x-1/2 w-16 h-32 bg-gradient-to-r from-amber-100 to-amber-50 rounded-b-2xl border-2 border-amber-800 shadow-inner relative overflow-hidden">
+                      {/* Liquide dans bouteille */}
+                      <div
+                        className="absolute bottom-0 left-0 right-0 transition-all duration-300 opacity-80"
+                        style={{
+                          height: `${bottlePercentage}%`,
+                          background: `linear-gradient(135deg, #8B4513 0%, #A0522D 100%)`,
+                          boxShadow: '0 4px 12px rgba(139, 69, 19, 0.4)',
+                          borderRadius: '0 0 16px 16px'
+                        }}
+                      />
+                      
+                      {/* Reflet bouteille */}
+                      <div className="absolute top-2 left-2 w-2 h-12 bg-white/20 rounded-full pointer-events-none" />
+                    </div>
+
+                    {/* Étiquette */}
+                    <div className="absolute top-12 left-1/2 -translate-x-1/2 w-12 h-6 bg-amber-700 rounded text-[9px] font-bold text-white flex items-center justify-center border border-amber-900">
+                      {Math.round(bottleTotal)} mL
+                    </div>
+                  </div>
+
+                  {/* Informations liquide */}
+                  <div className="w-full text-center">
+                    <div className="text-xs text-slate-400 mb-1">Volume total</div>
+                    <div className="text-lg font-mono text-amber-400 font-bold">{Math.round(bottleTotal)}/{bottleCapacity} mL</div>
+                  </div>
+
+                  <button
+                    onClick={resetGlass}
+                    disabled={bottleTotal === 0}
+                    className="w-full py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:bg-slate-800 disabled:text-slate-600 text-white text-sm font-bold transition-colors"
+                  >
+                    Vider la bouteille
+                  </button>
+                </div>
               </div>
             </section>
           </div>
 
           <div className="lg:col-span-3 space-y-6">
             <div className="bg-slate-900 rounded-3xl p-8 border border-slate-800 shadow-2xl">
-              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-8">Sélection des jus (N={juiceCount})</h2>
+              <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-8">Machine à café - 3 Jus</h2>
 
-              {juiceCount === 0 ? (
-                <div className="h-40 flex items-center justify-center rounded-2xl bg-slate-950 border-2 border-dashed border-slate-700">
-                  <div className="text-center text-slate-600">
-                    <Beaker size={32} className="mx-auto mb-2 opacity-50" />
-                    <p className="text-sm font-mono">Aucun jus configuré</p>
-                    <p className="text-xs opacity-50">Cliquez sur + pour ajouter</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                  {Array.from({ length: juiceCount }).map((_, index) => {
-                    const juiceColor = JUICE_COLORS[index % JUICE_COLORS.length];
-                    const juiceStock = stock[index] ?? 0;
-                    const juiceInGlass = glass[index] ?? 0;
-                    const juiceEmpty = juiceStock <= 0;
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {Array.from({ length: MAX_JUICES }).map((_, index) => {
+                  const juiceColor = JUICE_COLORS[index];
+                  const juiceName = JUICE_NAMES[index];
+                  const juiceStock = stock[index] ?? 0;
+                  const juiceInBottle = bottle[index] ?? 0;
+                  const juiceEmpty = juiceStock <= 0;
 
-                    return (
-                      <button
-                        key={index}
-                        onClick={() => pourJuice(index)}
-                        disabled={juiceEmpty || !canPour}
-                        className={`p-4 rounded-2xl transition-all transform hover:scale-105 active:scale-95 border-2 relative overflow-hidden group ${
-                          juiceEmpty
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => pourJuice(index)}
+                      disabled={juiceEmpty || !canPour}
+                      className={`p-6 rounded-2xl transition-all transform hover:scale-105 active:scale-95 border-2 relative overflow-hidden group flex flex-col items-center gap-3 ${
+                        juiceEmpty
+                          ? 'bg-slate-900 border-slate-700 opacity-50 cursor-not-allowed'
+                          : !canPour
                             ? 'bg-slate-900 border-slate-700 opacity-50 cursor-not-allowed'
-                            : !canPour
-                              ? 'bg-slate-900 border-slate-700 opacity-50 cursor-not-allowed'
-                              : `${juiceColor} border-white/30 hover:border-white/60 shadow-lg`
-                        }`}
-                      >
-                        <div className="flex justify-center mb-3">
-                          <Droplets size={24} className={juiceEmpty ? 'text-slate-600' : 'text-white'} />
+                            : `bg-opacity-20 border-white/30 hover:border-white/60 shadow-lg hover:shadow-xl`
+                      }`}
+                      style={{
+                        backgroundColor: juiceEmpty || !canPour ? undefined : `${juiceColor}20`,
+                        borderColor: juiceEmpty || !canPour ? undefined : `${juiceColor}80`
+                      }}
+                    >
+                      {/* Icon café */}
+                      <Coffee size={32} style={{ color: juiceColor }} className={juiceEmpty ? 'opacity-30' : ''} />
+
+                      <div className="text-center">
+                        <div className="text-sm font-bold uppercase tracking-tight mb-1" style={{ color: juiceColor }}>
+                          {juiceName}
                         </div>
 
-                        <div className="text-xs font-bold uppercase tracking-tight mb-2 text-white">
-                          JUS {index + 1}
+                        <div className="text-xs text-slate-300 mb-2">
+                          Stock: <span className="font-mono font-bold">{juiceStock}</span> mL
                         </div>
 
-                        <div className="text-[10px] text-white/80 mb-2">
-                          Stock: <span className="font-mono font-bold">{juiceStock}</span>ml
-                        </div>
-
-                        {juiceInGlass > 0 && (
-                          <div className="text-[10px] text-white/60">
-                            Dans le verre: <span className="font-mono font-bold text-white">{juiceInGlass}</span>ml
+                        {juiceInBottle > 0 && (
+                          <div className="text-xs text-slate-400">
+                            Dans bouteille: <span className="font-mono font-bold">{juiceInBottle}</span> mL
                           </div>
                         )}
 
                         {juiceEmpty && (
-                          <div className="text-[10px] font-bold text-white/60 mt-2">VIDE</div>
+                          <div className="text-xs font-bold text-slate-400 mt-2">VIDE</div>
                         )}
                         {!canPour && !juiceEmpty && (
-                          <div className="text-[10px] font-bold text-white/60 mt-2">PLEIN</div>
+                          <div className="text-xs font-bold text-slate-400 mt-2">PLEIN</div>
                         )}
+                      </div>
 
-                        {!juiceEmpty && canPour && (
-                          <div className="absolute inset-0 bg-white/10 animate-pulse pointer-events-none" />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                      {!juiceEmpty && canPour && (
+                        <div className="absolute inset-0 bg-white/10 animate-pulse pointer-events-none" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
 
               <div className="mt-8 p-4 bg-slate-950 rounded-2xl border border-slate-800">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                  <div><span className="text-slate-400">• Bouton</span> = Verser le jus (50 mL)</div>
+                  <div><span className="text-slate-400">• Clic bouton</span> = Verser 50 mL</div>
                   <div><span className="text-slate-400">• Stock</span> = Volume disponible</div>
                   <div><span className="text-slate-400">• VIDE</span> = Stock épuisé</div>
                 </div>
@@ -434,24 +468,24 @@ export default function DistributeurJus() {
                 <div className={`w-1.5 h-1.5 rounded-full ${isSimulationMode ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500 animate-pulse'}`}></div>
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium flex-1">
                   {isSimulationMode
-                    ? 'Mode Simulation — Logique du distributeur exécutée localement dans le navigateur'
-                    : `Mode Réel — Données Modbus Holding Registers depuis ESP32 @ ${connectedIp ?? '…'} · Poll 40ms`
+                    ? 'Mode Simulation — Logique de la machine exécutée localement dans le navigateur'
+                    : `Mode Réel — Données Modbus depuis ESP32 @ ${connectedIp ?? '…'} · Poll 40ms`
                   }
                 </p>
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-slate-400">
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-700">
-                  <span className="font-mono">HR15</span> = Nombre jus (N)
+                  <span className="font-mono">HR15</span> = N jus (3)
                 </div>
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-700">
-                  <span className="font-mono">HR16-18</span> = Verre (capacité, volume)
+                  <span className="font-mono">HR16-18</span> = Bouteille
                 </div>
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-700">
-                  <span className="font-mono">HR20-31</span> = Stock jus [0..11]
+                  <span className="font-mono">HR20-22</span> = Stock [Café, Chocolat, Lait]
                 </div>
                 <div className="p-3 bg-slate-950 rounded-xl border border-slate-700">
-                  <span className="font-mono">HR40-51</span> = Verre jus [0..11]
+                  <span className="font-mono">HR40-42</span> = Bouteille [Café, Chocolat, Lait]
                 </div>
               </div>
             </div>
