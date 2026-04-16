@@ -17,7 +17,7 @@ const int PIN_LED_WIFI   = 2;    // LED built-in — indicateur statut Wi-Fi
 const int PIN_SENSOR_IN  = 34;   // Entrée — capteur inductif entrée convoyeur
 const int PIN_SENSOR_OUT = 35;   // Entrée — capteur inductif sortie convoyeur
 const int PIN_MOTOR_OUT  = 4;    // Sortie — contacteur moteur (GPIO 4 en usine)
-const int PIN_LAMP       = 5;    // Sortie — lampe
+const int PIN_LAMP       = 15;   // Sortie — lampe
 //  ⚠ GPIO 2 réservé à la LED Wi-Fi. En usine, moteur sur GPIO 4.
 
 // ─── MODBUS HOLDING REGISTERS ─────────────────────────────────────────────

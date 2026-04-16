@@ -561,7 +561,7 @@ const App = () => {
             <p className="text-slate-500 mt-8 font-mono text-sm max-w-sm text-center bg-slate-950 p-4 rounded-xl border border-slate-800">
               Pilotage : <span className="text-blue-400">Coil 2</span><br/>
               État : <span className="text-blue-400">HR 15</span><br/>
-              Sortie ESP32 : <span className="text-blue-400">GPIO 5</span>
+              Sortie ESP32 : <span className="text-blue-400">GPIO 15</span>
             </p>
           </div>
         </main>
