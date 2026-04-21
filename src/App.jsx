@@ -8,10 +8,10 @@ import { Package, Package2, Droplets, MonitorSpeaker, Zap, Lightbulb } from 'luc
 
 const NAV_ITEMS = [
   { key: 'convoyeur', label: 'Convoyeur',        icon: Package,    color: 'blue',   badge: 'RÉEL+SIM' },
-  { key: 'lampe',     label: 'Lampe',             icon: Lightbulb,  color: 'yellow', badge: 'RÉEL+SIM' },
   { key: 'jus',       label: 'Distributeur Jus', icon: Droplets,   color: 'amber',  badge: 'SIM'      },
   { key: 'tri',       label: 'Tri Caisses',       icon: Zap,        color: 'purple', badge: 'SIM'      },
   { key: 'emballage', label: 'Emballage',         icon: Package2,   color: 'rose',   badge: 'SIM'      },
+  { key: 'lampe',     label: 'Lampe',             icon: Lightbulb,  color: 'yellow', badge: 'RÉEL+SIM' },
 ];
 
 const COLOR_MAP = {
