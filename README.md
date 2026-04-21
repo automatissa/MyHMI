@@ -1,9 +1,15 @@
-# IHM Convoyeur de Canettes — ESP32 / Modbus TCP
+# MyHMI — IHM Industrie 4.0
 
-Superviseur industriel d'un convoyeur de canettes avec deux modes :
+Superviseur industriel multi-modules sur ESP32 / Modbus TCP.  
+Interface en **sidebar gauche** — navigation webapp classique.
 
-- **Mode Simulation** — logique PLC complète dans le navigateur, aucun matériel requis
-- **Mode Réel** — l'ESP32 WROOM exécute la logique PLC, la RPi héberge l'IHM, communication Modbus TCP Wi-Fi avec découverte automatique
+| Module             | Simulation | Mode réel (ESP32) |
+|--------------------|:----------:|:-----------------:|
+| Convoyeur canettes | ✅         | ✅                |
+| Lampe              | ✅         | ✅                |
+| Distributeur jus   | ✅         | —                 |
+| Trieuse caisses    | ✅         | —                 |
+| Emballage canettes | ✅         | —                 |
 
 ---
 
@@ -11,128 +17,168 @@ Superviseur industriel d'un convoyeur de canettes avec deux modes :
 
 ```
 MODE SIMULATION
-  Navigateur React ──── PLC local (cycle 40 ms)
+  Navigateur React ──── PLC local (cycle 40–50 ms selon module)
 
 MODE RÉEL
-  Navigateur ──WebSocket──▶ Node.js (RPi :3002) ──Modbus TCP──▶ ESP32 (port 502)
-     React          socket.io        index.js          Slave ID=1
-                                         ▲
-                                    UDP :5001
-                                         │
-                               ESP32 annonce son IP
-                               au démarrage (auto)
+  Navigateur ──Socket.IO──▶ Node.js (:3002) ──Modbus TCP──▶ ESP32 (:502)
+                                  ▲
+                             UDP :5001
+                                  │
+                        ESP32 annonce son IP au démarrage
 ```
 
----
+### Navigation
 
-## Quick Start
-
-### Prérequis
-
-- Node.js ≥ 18
-- PlatformIO (pour flasher l'ESP32)
+Sidebar fixe à gauche (icônes seules sur mobile, icônes + labels sur desktop).  
+Chaque module indique son mode : `RÉEL+SIM` ou `SIM`.
 
 ---
 
-### Mode Simulation (sans matériel)
+## Commandes
 
 ```bash
-cd MyHMI
-npm install
-npm run dev:full
+make dev      # Développement  — Vite :5173 + Node :3002
+make build    # Production     — compile React → dist/
+make start    # Production     — compile + démarre le serveur (:3002)
+make flash    # ESP32          — compile firmware + flash + moniteur série
+make monitor  # ESP32          — moniteur série seul (sans reflasher)
+make clean    # Nettoyage      — dist/, cache Vite, artefacts firmware
 ```
 
-Ouvrir **http://localhost:5173** — le mode simulation est actif par défaut.
+> **Prérequis** : Node.js ≥ 18, PlatformIO (`pio` dans le PATH)
 
 ---
 
-### Mode Réel (RPi + ESP32)
+## Mode Simulation (sans matériel)
 
-#### 1. Flasher l'ESP32
+```bash
+make dev
+```
 
-Ouvrir `firmware/` dans VS Code + PlatformIO et flasher.
+Ouvrir **http://localhost:5173** — tous les modules fonctionnent sans ESP32.
 
-Les seuls paramètres à vérifier dans `firmware/src/main.cpp` :
+---
+
+## Mode Réel (RPi + ESP32)
+
+### 1. Flasher l'ESP32
+
+Vérifier les identifiants Wi-Fi dans `firmware/src/main.cpp` :
 
 ```cpp
-const char* WIFI_SSID     = "Hotspot";          // SSID du hotspot RPi
-const char* WIFI_PASSWORD = "transformeresp32";  // Mot de passe
+const char* WIFI_SSID     = "Hotspot";
+const char* WIFI_PASSWORD = "transformeresp32";
 ```
 
-Après le flash, la LED GPIO 2 clignote = ESP32 connecté et Modbus prêt.
-
-#### 2. Activer le hotspot sur la RPi
+Puis flasher :
 
 ```bash
-# Créer le hotspot (une seule fois)
+make flash
+```
+
+La LED GPIO 2 clignote = ESP32 connecté et Modbus prêt.
+
+### 2. Hotspot RPi
+
+```bash
+nmcli con up Hotspot   # démarre le hotspot "Hotspot"
+```
+
+Pour créer le hotspot la première fois :
+
+```bash
 nmcli dev wifi hotspot ifname wlan0 ssid "Hotspot" password "transformeresp32"
-
-# Les fois suivantes
-nmcli con up Hotspot
 ```
 
-#### 3. Déployer et démarrer sur la RPi
+### 3. Déployer sur la RPi
 
 ```bash
-cd MyHMI
-npm install
-npm run build       # Compile le frontend React → dist/
-npm start           # Sert le frontend + WebSocket sur le port 3002
+make start   # compile React + lance le serveur sur :3002
 ```
 
-Le serveur écoute le port UDP 5001. Dès que l'ESP32 se connecte au hotspot, il annonce son IP automatiquement → le serveur se connecte en Modbus TCP sans intervention.
-
-#### 4. Ouvrir l'IHM
-
-Depuis n'importe quel navigateur sur le réseau hotspot :
+### 4. Ouvrir l'IHM
 
 ```
 http://<IP_RPi>:3002
 ```
 
-Cliquer **Mode Réel** — la connexion s'établit automatiquement.
+Sur la page **Convoyeur** ou **Lampe**, cliquer **Mode Réel** — la connexion s'établit automatiquement via UDP.
 
 ---
 
-## Flux de connexion automatique
+## Connexion automatique
 
 ```
-RPi active hotspot "Hotspot"
-       │
-ESP32 se connecte au Wi-Fi
-       │
-ESP32 envoie UDP "ESP32_IP:<ip>" → RPi:5001  (immédiat + toutes les 10 s)
-       │
-RPi reçoit UDP → connectModbus(<ip>:502)
-       │
-Modbus établi → socket.io notifie l'IHM → "MODBUS TCP — <ip>"
-       │
-Poll Modbus 100 ms → HMI temps réel
+ESP32 boot → Wi-Fi → envoie "ESP32_IP:<ip>" UDP → RPi:5001
+RPi reçoit → connectModbus(<ip>:502)
+Modbus OK  → Socket.IO notifie l'IHM → "MODBUS TCP — <ip>"
+Poll 100 ms → données temps réel
 ```
 
-Si la connexion est perdue (coupure réseau, redémarrage) : reconnexion automatique des deux côtés.
+Si l'UDP est bloqué par le pare-feu : entrer l'IP manuellement dans l'IHM.
+
+---
+
+## Module Emballage Canettes (simulation)
+
+Cellule robotisée d'emballage automatique :
+
+- Convoyeur principal alimente des canettes en continu
+- Un **système de vision** détecte le type de pack (6 ou 12 canettes)
+- Quand 3 canettes atteignent la sortie, un **bras robotique** les saisit avec des ventouses
+- Le bras dépose les canettes dans le pack (rangées de 3) et revient chercher le lot suivant
+- Une fois le pack complet, il est évacué sur un **convoyeur de sortie**
+- Pendant le dépôt, 3 nouvelles canettes s'acheminent simultanément
+
+| Phase          | Description                                      |
+|----------------|--------------------------------------------------|
+| `scanning`     | Vision système — détection 6-pack ou 12-pack     |
+| `conveying`    | Attente de 3 canettes en bout de convoyeur       |
+| `pickup`       | Bras descend, ventouses saisissent les 3 canettes|
+| `to_pack`      | Bras se déplace vers la zone pack                |
+| `placing`      | Dépôt dans le pack + chargement 3 suivantes      |
+| `to_home`      | Retour position initiale                         |
+| `pack_exit`    | Pack complet évacué sur convoyeur de sortie      |
 
 ---
 
 ## Carte Modbus (Slave ID=1, port 502)
 
-### Holding Registers (lecture backend)
+| Registre | Nom          | Description                  | Valeurs        |
+|----------|--------------|------------------------------|----------------|
+| HR0      | MOTOR        | État moteur                  | 0=STOP / 1=RUN |
+| HR1      | SENSOR_IN    | Capteur entrée               | 0 / 1          |
+| HR2      | SENSOR_OUT   | Capteur sortie               | 0 / 1          |
+| HR3      | CAN_COUNT    | Canettes sur le tapis        | 0–10           |
+| HR4      | TOTAL        | Total canettes traitées      | 0–65535        |
+| HR5–14   | POS_CAN_x    | Positions canettes 0–9       | 0–100 %        |
+| HR15     | LAMP         | État lampe                   | 0 / 1          |
+| C0       | ADD_CAN      | Ajouter canette (pulse 300ms)   | —           |
+| C1       | RETRIEVE_CAN | Récupérer canette (pulse 300ms) | —           |
+| C2       | LAMP         | Commande lampe (état direct)    | 0 / 1       |
 
-| Adresse | Nom        | Description               | Valeurs        |
-|---------|------------|---------------------------|----------------|
-| HR0     | MOTOR      | État moteur               | 0=STOP / 1=RUN |
-| HR1     | SENSOR_IN  | Capteur entrée (I0.0)     | 0 / 1          |
-| HR2     | SENSOR_OUT | Capteur sortie (I0.1)     | 0 / 1          |
-| HR3     | CAN_COUNT  | Canettes sur le tapis     | 0–10           |
-| HR4     | TOTAL      | Total canettes traitées   | 0–65535        |
-| HR5–14  | POS_CAN_x  | Positions canettes (0–9)  | 0–100 %        |
+---
 
-### Coils (écriture backend — pulse 300 ms)
+## GPIO ESP32
 
-| Adresse | Nom               | Description           |
-|---------|-------------------|-----------------------|
-| C0      | COIL_ADD_CAN      | Ajouter une canette   |
-| C1      | COIL_RETRIEVE_CAN | Récupérer une canette |
+| Pin | Rôle                    |
+|-----|-------------------------|
+| 2   | LED statut Wi-Fi        |
+| 4   | Contacteur moteur       |
+| 15  | Lampe                   |
+| 34  | Capteur entrée (option) |
+| 35  | Capteur sortie (option) |
+
+`PIN_USE_PHYSICAL_SENSORS = true` dans `firmware/src/main.cpp` pour activer les capteurs physiques.
+
+---
+
+## Physique simulation
+
+Tous les convoyeurs appliquent une contrainte de gap minimum (`MIN_GAP`) entre éléments :
+- Traitement **leader → suiveur** à chaque cycle pour éviter l'empilement visuel
+- Injection bloquée si la zone d'entrée est déjà occupée
+- Sur la Trieuse : gap indépendant par piste (tapis principal / sortie haut / sortie droite)
 
 ---
 
@@ -140,49 +186,18 @@ Si la connexion est perdue (coupure réseau, redémarrage) : reconnexion automat
 
 ```
 MyHMI/
-├── firmware/              # Code embarqué ESP32 (PlatformIO)
+├── firmware/                        # ESP32 — PlatformIO
 │   ├── platformio.ini
-│   └── src/
-│       └── main.cpp       # PLC + Modbus TCP slave + annonce UDP
-├── server/                # Backend Node.js
-│   └── index.js           # Gateway WebSocket ↔ Modbus TCP + découverte UDP
-│                          # + serveur statique (dist/) en production
-├── src/                   # Frontend React
-│   ├── App.jsx            # IHM principale (simulation + mode réel)
-│   ├── App.css
-│   ├── main.jsx
-│   └── index.css
-├── index.html
-├── vite.config.js
-├── tailwind.config.js
-├── postcss.config.js
-├── eslint.config.js
+│   └── src/main.cpp                 # Convoyeur + lampe, Modbus TCP, UDP
+├── server/
+│   └── index.js                     # Socket.IO ↔ Modbus TCP + UDP discovery
+├── src/
+│   ├── App.jsx                      # Sidebar gauche + routing
+│   ├── convoyeur/ConvoyeurCanettes.jsx            # Réel + simulation
+│   ├── lampe/Lampe.jsx                            # Réel + simulation
+│   ├── distributeur_jus/DistributeurJus.jsx       # Simulation
+│   ├── trieuse_caisse/TrieuseCaisse.jsx           # Simulation
+│   └── emballage_canettes/EmballageCanettes.jsx   # Simulation
+├── Makefile
 └── package.json
 ```
-
----
-
-## Logique convoyeur (ESP32 — cycle 100 ms)
-
-| Condition                            | Moteur | Canettes        |
-|--------------------------------------|--------|-----------------|
-| Tapis vide                           | STOP   | —               |
-| Canettes présentes, sortie libre     | RUN    | avancent        |
-| Canette à 100 % (fin de course)      | STOP   | figées          |
-| Opérateur récupère via IHM           | RUN    | reprennent      |
-| Tapis plein (10 canettes)            | RUN    | bouton désactivé |
-
-Incrément position : **2 %/cycle** → traversée complète en **5 s**.
-
----
-
-## GPIO ESP32
-
-| Pin | Rôle                        | Config              |
-|-----|-----------------------------|---------------------|
-| 2   | LED statut Wi-Fi            | OUTPUT (built-in)   |
-| 4   | Contacteur moteur           | OUTPUT              |
-| 34  | Capteur inductif entrée     | INPUT (si physique) |
-| 35  | Capteur inductif sortie     | INPUT (si physique) |
-
-Mettre `PIN_USE_PHYSICAL_SENSORS = true` dans `firmware/src/main.cpp` pour activer les capteurs réels.

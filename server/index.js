@@ -169,7 +169,7 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('[Coil] Erreur exit:', e.message); }
   });
 
-    socket.on('toggle_lamp', async (state) => {
+  socket.on('toggle_lamp', async (state) => {
     if (!isConnected) return;
     console.log(`[Coil] Lampe → Coil 2 (COIL_LAMP) : ${state}`);
     try {
@@ -177,6 +177,7 @@ io.on('connection', (socket) => {
     } catch (e) { console.error('[Coil] Erreur lamp:', e.message); }
   });
 });
+
 
 // ─── DÉMARRAGE ───────────────────────────────────────────────────────────────
 const PORT = 3002;

@@ -16,7 +16,7 @@ const bool PIN_USE_PHYSICAL_SENSORS = false;  // true = capteurs réels en usine
 const int PIN_LED_WIFI   = 2;    // LED built-in — indicateur statut Wi-Fi
 const int PIN_SENSOR_IN  = 34;   // Entrée — capteur inductif entrée convoyeur
 const int PIN_SENSOR_OUT = 35;   // Entrée — capteur inductif sortie convoyeur
-const int PIN_MOTOR_OUT  = 4;    // Sortie — contacteur moteur (GPIO 4 en usine)
+const int PIN_MOTOR_OUT  = 4;    // Sortie — contacteur moteur
 const int PIN_LAMP       = 15;   // Sortie — lampe
 //  ⚠ GPIO 2 réservé à la LED Wi-Fi. En usine, moteur sur GPIO 4.
 
@@ -27,6 +27,7 @@ const int PIN_LAMP       = 15;   // Sortie — lampe
 //  HR3  → Nb canettes tapis  (0–10)
 //  HR4  → Total traité
 //  HR5–HR14 → Positions canettes 0–9 (0–100 %)
+//  HR15     → État lampe (0/1)
 const int HR_MOTOR      = 0;
 const int HR_SENSOR_IN  = 1;
 const int HR_SENSOR_OUT = 2;
@@ -38,9 +39,10 @@ const int HR_LAMP       = 15;
 // ─── MODBUS COILS (commandes HMI) ─────────────────────────────────────────
 //  C0 → Ajouter canette   (pulse depuis IHM)
 //  C1 → Récupérer canette (pulse depuis IHM)
+//  C2 → Commande lampe    (état direct depuis IHM)
 const int COIL_ADD_CAN      = 0;
 const int COIL_RETRIEVE_CAN = 1;
-const int COIL_LAMP         = 2; // Commande lampe
+const int COIL_LAMP         = 2;
 
 // ─── CONSTANTES PLC ───────────────────────────────────────────────────────
 const int   MAX_CANS       = 10;
@@ -61,12 +63,12 @@ bool  prevCoilAdd      = false;
 bool  prevCoilRetrieve = false;
 
 // ─── TIMERS (millis — non bloquants) ──────────────────────────────────────
-unsigned long lastPlcTick    = 0;   // cycle PLC 100ms
-unsigned long lastWifiRetry  = 0;   // retry Wi-Fi 5000ms
-unsigned long lastLedBlink   = 0;   // clignotement LED 500ms
-unsigned long lastAnnounce   = 0;   // ré-annonce UDP 10s
-bool          ledState       = false;
-bool          modbusStarted  = false;
+unsigned long lastPlcTick   = 0;   // cycle PLC 100ms
+unsigned long lastWifiRetry = 0;   // retry Wi-Fi 5000ms
+unsigned long lastLedBlink  = 0;   // clignotement LED 500ms
+unsigned long lastAnnounce  = 0;   // ré-annonce UDP 10s
+bool          ledState      = false;
+bool          modbusStarted = false;
 
 ModbusIP mb;
 WiFiUDP  udp;
@@ -101,18 +103,14 @@ bool hasCanAtExit() {
 }
 
 // ─── ANNONCE UDP : envoie "ESP32_IP:<ip>" au serveur RPi ──────────────────
-//  Le RPi (hotspot) est toujours l'adresse gateway vue par l'ESP32.
-//  On annonce aussi en broadcast pour couvrir d'autres topologies.
 void announceIP() {
-  String msg       = "ESP32_IP:" + WiFi.localIP().toString();
+  String msg      = "ESP32_IP:" + WiFi.localIP().toString();
   IPAddress gateway = WiFi.gatewayIP();
 
-  // 1. Envoi direct au gateway (RPi hotspot)
   udp.beginPacket(gateway, UDP_ANNOUNCE_PORT);
   udp.print(msg);
   udp.endPacket();
 
-  // 2. Envoi en broadcast (filet de sécurité)
   udp.beginPacket(IPAddress(255, 255, 255, 255), UDP_ANNOUNCE_PORT);
   udp.print(msg);
   udp.endPacket();
@@ -132,16 +130,14 @@ void setup() {
     pinMode(PIN_SENSOR_OUT, INPUT_PULLDOWN);
   }
 
-  // LED ON pendant la connexion
   digitalWrite(PIN_LED_WIFI,  HIGH);
   digitalWrite(PIN_MOTOR_OUT, LOW);
+  digitalWrite(PIN_LAMP,      LOW);
 
-  // Init tableau canettes
   for (int i = 0; i < MAX_CANS; i++) {
     cans[i].active = false; cans[i].position = 0.0f;
   }
 
-  // Lancer Wi-Fi sans bloquer — loop() gérera le reste
   Serial.println("[WiFi] Connexion à " + String(WIFI_SSID) + "...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
@@ -154,11 +150,9 @@ void loop() {
   // ══ GESTION WI-FI + LED ═══════════════════════════════════════════════
 
   if (!wifiOk) {
-    // LED allumée en permanence = pas connecté
     digitalWrite(PIN_LED_WIFI, HIGH);
     modbusStarted = false;
 
-    // Retry toutes les 5 secondes
     if (now - lastWifiRetry >= 5000) {
       lastWifiRetry = now;
       Serial.println("[WiFi] Tentative reconnexion...");
@@ -166,7 +160,7 @@ void loop() {
       WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     }
 
-    return;  // PLC et Modbus suspendus tant que pas de réseau
+    return;
   }
 
   // ── Connecté : démarrer Modbus une seule fois ──────────────────────────
@@ -181,14 +175,12 @@ void loop() {
     modbusStarted = true;
     Serial.println("[Modbus] Serveur TCP prêt sur le port 502");
 
-    udp.begin(0);  // Port éphémère — envoi seulement, pas besoin de port fixe
-
-    // Première annonce immédiate
+    udp.begin(0);
     announceIP();
     lastAnnounce = now;
   }
 
-  // ── Ré-annonce UDP toutes les 10 s (RPi peut redémarrer) ──────────────
+  // ── Ré-annonce UDP toutes les 10 s ────────────────────────────────────
   if (now - lastAnnounce >= 10000) {
     lastAnnounce = now;
     announceIP();
@@ -201,7 +193,7 @@ void loop() {
     digitalWrite(PIN_LED_WIFI, ledState);
   }
 
-  // ══ MODBUS (traitement paquets réseau — le plus souvent possible) ══════
+  // ══ MODBUS ════════════════════════════════════════════════════════════
   mb.task();
 
   // ══ CYCLE PLC 100ms ═══════════════════════════════════════════════════
@@ -218,11 +210,11 @@ void loop() {
   bool coilAdd      = mb.Coil(COIL_ADD_CAN);
   bool coilRetrieve = mb.Coil(COIL_RETRIEVE_CAN);
   bool coilLamp     = mb.Coil(COIL_LAMP);
-  
+
   digitalWrite(PIN_LAMP, coilLamp ? HIGH : LOW);
 
-  if ((coilAdd && !prevCoilAdd) || sensorIn)           { addCan();      sensorIn  = false; }
-  if ((coilRetrieve && !prevCoilRetrieve) || sensorOut) { retrieveCan(); sensorOut = false; }
+  if ((coilAdd && !prevCoilAdd) || sensorIn)            { addCan();      sensorIn  = false; }
+  if ((coilRetrieve && !prevCoilRetrieve) || sensorOut)  { retrieveCan(); sensorOut = false; }
 
   prevCoilAdd      = coilAdd;
   prevCoilRetrieve = coilRetrieve;
@@ -250,7 +242,7 @@ void loop() {
   mb.Hreg(HR_SENSOR_OUT, sensorOut    ? 1 : 0);
   mb.Hreg(HR_CAN_COUNT,  canCount);
   mb.Hreg(HR_TOTAL,      totalOut);
-  mb.Hreg(HR_LAMP,       coilLamp     ? 1 : 0);
+  mb.Hreg(HR_LAMP,       coilLamp ? 1 : 0);
 
   int slot = 0;
   for (int i = 0; i < MAX_CANS; i++) {
