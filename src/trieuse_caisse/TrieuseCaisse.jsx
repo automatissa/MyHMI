@@ -3,7 +3,7 @@ import { Package, RotateCcw, Zap } from 'lucide-react';
 
 // ─── Constantes automate ────────────────────────────────────────────────────
 const MAX_CAPACITY     = 6;
-const SCAN_RATE_MS     = 50;
+const SCAN_RATE_MS     = 10;
 const TRAVEL_TIME_S    = 7;
 const POS_INCREMENT    = 100 / ((TRAVEL_TIME_S * 1000) / SCAN_RATE_MS);
 const WEIGHT_LIGHT     = 200;

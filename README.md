@@ -17,7 +17,7 @@ Interface en **sidebar gauche** — navigation webapp classique.
 
 ```
 MODE SIMULATION
-  Navigateur React ──── PLC local (cycle 40–50 ms selon module)
+  Navigateur React ──── PLC local (cycle 10 ms, 100 Hz)
 
 MODE RÉEL
   Navigateur ──Socket.IO──▶ Node.js (:3002) ──Modbus TCP──▶ ESP32 (:502)
@@ -31,6 +31,20 @@ MODE RÉEL
 
 Sidebar fixe à gauche (icônes seules sur mobile, icônes + labels sur desktop).  
 Chaque module indique son mode : `RÉEL+SIM` ou `SIM`.
+
+---
+
+## Temps de cycle
+
+| Couche | Cycle | Fréquence | Temps réel ? |
+|---|---|---|---|
+| ESP32 firmware (`loop`) | 100 ms | 10 Hz | ✅ Oui — bare metal, gigue < ms |
+| Node.js poll Modbus | 100 ms | 10 Hz | ⚠️ Soft — dépend de l'OS |
+| React simulation (navigateur) | 10 ms | 100 Hz | ❌ Non — `setInterval` best-effort |
+
+> **Note temps réel** : un navigateur web tourne sur un OS non-temps-réel. `setInterval(fn, 10)` est une demande, pas une garantie — le scheduler OS peut retarder le tick de 2 à 20 ms selon la charge. Pour la **simulation visuelle** c'est largement suffisant. Pour du **vrai contrôle industriel**, seul l'ESP32 (bare metal) est temps réel dans ce projet.
+>
+> Sur Raspberry Pi, en cas de lag visible, passer à 20 ms (`SCAN_RATE_MS = 20`) est un bon compromis.
 
 ---
 

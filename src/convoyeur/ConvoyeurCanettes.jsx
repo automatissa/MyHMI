@@ -8,7 +8,7 @@ import {
 // ─── CONSTANTES PLC ────────────────────────────────────────────────────────
 
 const MAX_CAPACITY       = 10;
-const SCAN_RATE_MS       = 40;       // 25 Hz — cycle scan navigateur
+const SCAN_RATE_MS       = 10;       // 100 Hz — cycle scan navigateur
 const TRAVEL_TIME_S      = 5;
 const POSITION_INCREMENT = 100 / (TRAVEL_TIME_S * 1000 / SCAN_RATE_MS);
 const MIN_GAP            = 10;       // distance minimale entre canettes (unités de position)

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Square, Eye, Cpu, Package, MonitorSpeaker } from 'lucide-react';
 
 // ── Constantes simulation ────────────────────────────────────────────────────
-const TICK_MS       = 50;
+const TICK_MS       = 10;
 const TRAVEL_MS     = 5000;
 const POS_INC       = 100 / (TRAVEL_MS / TICK_MS);
 const INJECT_DELAY  = 1800;   // ms entre chaque injection auto
@@ -73,7 +73,7 @@ export default function EmballageCanettes() {
     if (s.phase === 'idle') { simRef.current = s; setView({ ...s }); return; }
 
     // ── Animation tapis ────────────────────────────────────────────────────
-    s.beltTick = (s.beltTick + 1) % 40;
+    s.beltTick = (s.beltTick + 1) % 200;  // même vitesse visuelle qu'à 50 ms
 
     // ── Phase : scanning (vision) ──────────────────────────────────────────
     if (s.phase === 'scanning') {
