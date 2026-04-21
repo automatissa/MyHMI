@@ -1,52 +1,198 @@
-# IHM Convoyeur de Canettes — ESP32 / Modbus TCP
+# MyHMI — IHM Industrie 4.0
 
-Simulateur industriel d'un convoyeur de canettes avec deux modes de fonctionnement :
-- **Mode Simulation** : logique PLC complète dans le navigateur (démo sans matériel)
-- **Mode Réel** : l'ESP32 WROOM exécute la logique PLC, la RPi héberge l'IHM, communication via Modbus TCP Wi-Fi
+Superviseur industriel multi-modules sur ESP32 / Modbus TCP.  
+Interface en **sidebar gauche** — navigation webapp classique.
+
+| Module             | Simulation | Mode réel (ESP32) |
+|--------------------|:----------:|:-----------------:|
+| Convoyeur canettes | ✅         | ✅                |
+| Lampe              | ✅         | ✅                |
+| Distributeur jus   | ✅         | —                 |
+| Trieuse caisses    | ✅         | —                 |
+| Emballage canettes | ✅         | —                 |
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  MODE SIMULATION (PC de dev)                            │
-│                                                         │
-│   Navigateur React ──── Logique PLC locale (40ms)       │
-└─────────────────────────────────────────────────────────┘
+MODE SIMULATION
+  Navigateur React ──── PLC local (cycle 10 ms, 100 Hz)
 
-┌─────────────────────────────────────────────────────────┐
-│  MODE RÉEL                                              │
-│                                                         │
-│  Navigateur ──WebSocket──▶ Node.js (RPi) ──Modbus TCP──▶ ESP32 WROOM │
-│   (React)       :3001      server.js        port 502    │  (Slave ID=1) │
-└─────────────────────────────────────────────────────────┘
+MODE RÉEL
+  Navigateur ──Socket.IO──▶ Node.js (:3002) ──Modbus TCP──▶ ESP32 (:502)
+                                  ▲
+                             UDP :5001
+                                  │
+                        ESP32 annonce son IP au démarrage
 ```
+
+### Navigation
+
+Sidebar fixe à gauche (icônes seules sur mobile, icônes + labels sur desktop).  
+Chaque module indique son mode : `RÉEL+SIM` ou `SIM`.
 
 ---
 
-## Carte Modbus — ESP32 (Slave ID=1, port 502)
+## Temps de cycle
 
-### Holding Registers — lecture par le backend Node.js
+| Couche | Cycle | Fréquence | Temps réel ? |
+|---|---|---|---|
+| ESP32 firmware (`loop`) | 100 ms | 10 Hz | ✅ Oui — bare metal, gigue < ms |
+| Node.js poll Modbus | 100 ms | 10 Hz | ⚠️ Soft — dépend de l'OS |
+| React simulation (navigateur) | 10 ms | 100 Hz | ❌ Non — `setInterval` best-effort |
 
-| Adresse | Nom         | Description                      | Valeurs     |
-|---------|-------------|----------------------------------|-------------|
-| HR0     | MOTOR       | État moteur                      | 0=STOP / 1=RUN |
-| HR1     | SENSOR_IN   | Capteur entrée (I0.0)            | 0 / 1       |
-| HR2     | SENSOR_OUT  | Capteur sortie (I0.1)            | 0 / 1       |
-| HR3     | CAN_COUNT   | Nb canettes sur le tapis         | 0–10        |
-| HR4     | TOTAL       | Total canettes traitées          | 0–65535     |
-| HR5     | POS_CAN_0   | Position canette 0               | 0–100 %     |
-| HR6     | POS_CAN_1   | Position canette 1               | 0–100 %     |
-| …       | …           | …                                | …           |
-| HR14    | POS_CAN_9   | Position canette 9               | 0–100 %     |
+> **Note temps réel** : un navigateur web tourne sur un OS non-temps-réel. `setInterval(fn, 10)` est une demande, pas une garantie — le scheduler OS peut retarder le tick de 2 à 20 ms selon la charge. Pour la **simulation visuelle** c'est largement suffisant. Pour du **vrai contrôle industriel**, seul l'ESP32 (bare metal) est temps réel dans ce projet.
+>
+> Sur Raspberry Pi, en cas de lag visible, passer à 20 ms (`SCAN_RATE_MS = 20`) est un bon compromis.
 
-### Coils — écriture par le backend Node.js (pulse 100ms)
+---
 
-| Adresse | Nom              | Description            |
-|---------|------------------|------------------------|
-| C0      | COIL_ADD_CAN     | Ajouter une canette    |
-| C1      | COIL_RETRIEVE_CAN| Récupérer une canette  |
+## Commandes
+
+```bash
+make dev      # Développement  — Vite :5173 + Node :3002
+make build    # Production     — compile React → dist/
+make start    # Production     — compile + démarre le serveur (:3002)
+make flash    # ESP32          — compile firmware + flash + moniteur série
+make monitor  # ESP32          — moniteur série seul (sans reflasher)
+make clean    # Nettoyage      — dist/, cache Vite, artefacts firmware
+```
+
+> **Prérequis** : Node.js ≥ 18, PlatformIO (`pio` dans le PATH)
+
+---
+
+## Mode Simulation (sans matériel)
+
+```bash
+make dev
+```
+
+Ouvrir **http://localhost:5173** — tous les modules fonctionnent sans ESP32.
+
+---
+
+## Mode Réel (RPi + ESP32)
+
+### 1. Flasher l'ESP32
+
+Vérifier les identifiants Wi-Fi dans `firmware/src/main.cpp` :
+
+```cpp
+const char* WIFI_SSID     = "Hotspot";
+const char* WIFI_PASSWORD = "transformeresp32";
+```
+
+Puis flasher :
+
+```bash
+make flash
+```
+
+La LED GPIO 2 clignote = ESP32 connecté et Modbus prêt.
+
+### 2. Hotspot RPi
+
+```bash
+nmcli con up Hotspot   # démarre le hotspot "Hotspot"
+```
+
+Pour créer le hotspot la première fois :
+
+```bash
+nmcli dev wifi hotspot ifname wlan0 ssid "Hotspot" password "transformeresp32"
+```
+
+### 3. Déployer sur la RPi
+
+```bash
+make start   # compile React + lance le serveur sur :3002
+```
+
+### 4. Ouvrir l'IHM
+
+```
+http://<IP_RPi>:3002
+```
+
+Sur la page **Convoyeur** ou **Lampe**, cliquer **Mode Réel** — la connexion s'établit automatiquement via UDP.
+
+---
+
+## Connexion automatique
+
+```
+ESP32 boot → Wi-Fi → envoie "ESP32_IP:<ip>" UDP → RPi:5001
+RPi reçoit → connectModbus(<ip>:502)
+Modbus OK  → Socket.IO notifie l'IHM → "MODBUS TCP — <ip>"
+Poll 100 ms → données temps réel
+```
+
+Si l'UDP est bloqué par le pare-feu : entrer l'IP manuellement dans l'IHM.
+
+---
+
+## Module Emballage Canettes (simulation)
+
+Cellule robotisée d'emballage automatique :
+
+- Convoyeur principal alimente des canettes en continu
+- Un **système de vision** détecte le type de pack (6 ou 12 canettes)
+- Quand 3 canettes atteignent la sortie, un **bras robotique** les saisit avec des ventouses
+- Le bras dépose les canettes dans le pack (rangées de 3) et revient chercher le lot suivant
+- Une fois le pack complet, il est évacué sur un **convoyeur de sortie**
+- Pendant le dépôt, 3 nouvelles canettes s'acheminent simultanément
+
+| Phase          | Description                                      |
+|----------------|--------------------------------------------------|
+| `scanning`     | Vision système — détection 6-pack ou 12-pack     |
+| `conveying`    | Attente de 3 canettes en bout de convoyeur       |
+| `pickup`       | Bras descend, ventouses saisissent les 3 canettes|
+| `to_pack`      | Bras se déplace vers la zone pack                |
+| `placing`      | Dépôt dans le pack + chargement 3 suivantes      |
+| `to_home`      | Retour position initiale                         |
+| `pack_exit`    | Pack complet évacué sur convoyeur de sortie      |
+
+---
+
+## Carte Modbus (Slave ID=1, port 502)
+
+| Registre | Nom          | Description                  | Valeurs        |
+|----------|--------------|------------------------------|----------------|
+| HR0      | MOTOR        | État moteur                  | 0=STOP / 1=RUN |
+| HR1      | SENSOR_IN    | Capteur entrée               | 0 / 1          |
+| HR2      | SENSOR_OUT   | Capteur sortie               | 0 / 1          |
+| HR3      | CAN_COUNT    | Canettes sur le tapis        | 0–10           |
+| HR4      | TOTAL        | Total canettes traitées      | 0–65535        |
+| HR5–14   | POS_CAN_x    | Positions canettes 0–9       | 0–100 %        |
+| HR15     | LAMP         | État lampe                   | 0 / 1          |
+| C0       | ADD_CAN      | Ajouter canette (pulse 300ms)   | —           |
+| C1       | RETRIEVE_CAN | Récupérer canette (pulse 300ms) | —           |
+| C2       | LAMP         | Commande lampe (état direct)    | 0 / 1       |
+
+---
+
+## GPIO ESP32
+
+| Pin | Rôle                    |
+|-----|-------------------------|
+| 2   | LED statut Wi-Fi        |
+| 4   | Contacteur moteur       |
+| 15  | Lampe                   |
+| 34  | Capteur entrée (option) |
+| 35  | Capteur sortie (option) |
+
+`PIN_USE_PHYSICAL_SENSORS = true` dans `firmware/src/main.cpp` pour activer les capteurs physiques.
+
+---
+
+## Physique simulation
+
+Tous les convoyeurs appliquent une contrainte de gap minimum (`MIN_GAP`) entre éléments :
+- Traitement **leader → suiveur** à chaque cycle pour éviter l'empilement visuel
+- Injection bloquée si la zone d'entrée est déjà occupée
+- Sur la Trieuse : gap indépendant par piste (tapis principal / sortie haut / sortie droite)
 
 ---
 
@@ -54,143 +200,18 @@ Simulateur industriel d'un convoyeur de canettes avec deux modes de fonctionneme
 
 ```
 MyHMI/
-├── server.js              # Backend Node.js — pont WebSocket ↔ Modbus TCP
-├── index.html             # Point d'entrée HTML (Tailwind via CDN)
-├── vite.config.js         # Vite + proxy WebSocket /ws → :3001
-├── package.json
-│
+├── firmware/                        # ESP32 — PlatformIO
+│   ├── platformio.ini
+│   └── src/main.cpp                 # Convoyeur + lampe, Modbus TCP, UDP
+├── server/
+│   └── index.js                     # Socket.IO ↔ Modbus TCP + UDP discovery
 ├── src/
-│   ├── App.jsx            # IHM React — simulation + mode réel WebSocket
-│   ├── main.jsx
-│   └── index.css
-│
-├── esp32-plc/
-│   ├── platformio.ini     # PlatformIO — board esp32dev
-│   └── src/
-│       └── main.cpp       # Firmware ESP32 — PLC + Modbus TCP slave
-│
-└── backend/               # Ancienne version (socket.io — non utilisée)
-    └── server.js
+│   ├── App.jsx                      # Sidebar gauche + routing
+│   ├── convoyeur/ConvoyeurCanettes.jsx            # Réel + simulation
+│   ├── lampe/Lampe.jsx                            # Réel + simulation
+│   ├── distributeur_jus/DistributeurJus.jsx       # Simulation
+│   ├── trieuse_caisse/TrieuseCaisse.jsx           # Simulation
+│   └── emballage_canettes/EmballageCanettes.jsx   # Simulation
+├── Makefile
+└── package.json
 ```
-
----
-
-## Démarrage rapide
-
-### Prérequis
-- Node.js ≥ 18
-- npm
-
-### 1. Installer les dépendances
-
-```bash
-cd MyHMI
-npm install --ignore-scripts
-```
-
-> `--ignore-scripts` est nécessaire pour ignorer la compilation native de `modbus-serial`
-> (les bindings série ne sont pas requis pour Modbus TCP).
-
-### 2. Lancer en mode développement complet
-
-```bash
-# Sous PowerShell (Node.js doit être dans le PATH)
-$env:PATH = "C:\Program Files\nodejs;$env:PATH"
-npm run dev:full
-```
-
-Cela démarre en parallèle :
-- **Vite** → http://localhost:5173 (IHM React)
-- **Backend Node.js** → ws://localhost:3001 (pont Modbus)
-
-> Pour ajouter Node.js au PATH de façon permanente, redémarre PowerShell après :
-> ```powershell
-> # (déjà exécuté — relancer PowerShell suffit)
-> ```
-
-### 3. Utiliser le Mode Réel
-
-1. Flasher l'ESP32 avec le firmware PlatformIO (`esp32-plc/`)
-2. Configurer le Wi-Fi dans `main.cpp` (`WIFI_SSID` / `WIFI_PASSWORD`)
-3. Cliquer **"Mode Réel"** dans l'IHM
-4. Saisir l'IP de l'ESP32 (visible dans le moniteur série)
-5. Cliquer **Connecter**
-
----
-
-## Firmware ESP32 (PlatformIO)
-
-### Configuration `platformio.ini`
-
-```ini
-[env:esp32dev]
-platform  = espressif32
-board     = esp32dev
-framework = arduino
-lib_deps  = emelianov/modbus-esp8266@^4.1.0
-```
-
-### Variables importantes `main.cpp`
-
-```cpp
-const char* WIFI_SSID     = "VOTRE_WIFI_RPi";
-const char* WIFI_PASSWORD = "VOTRE_MOT_DE_PASSE";
-
-// Mettre true pour lire les capteurs physiques GPIO en usine
-const bool PIN_USE_PHYSICAL_SENSORS = false;
-
-const int PIN_SENSOR_IN  = 34;   // Capteur inductif entrée
-const int PIN_SENSOR_OUT = 35;   // Capteur inductif sortie
-const int PIN_MOTOR_OUT  = 2;    // LED / contacteur moteur
-```
-
-### Logique PLC embarquée (100ms / 10Hz)
-
-- Moteur actif si canettes présentes **ET** aucun blocage en sortie
-- Incrément position : **2 %/cycle** (100 % en 5 s)
-- Coil IHM OU capteur physique déclenche ajout/récupération
-- Toutes les positions écrites en Holding Registers HR5–HR14
-
----
-
-## Déploiement sur Raspberry Pi
-
-```bash
-# Sur la RPi
-git clone <repo>
-cd MyHMI
-npm install --ignore-scripts
-npm run build          # Génère dist/
-
-# Servir le build + backend en production
-node server.js         # Backend WebSocket + Modbus sur :3001
-# + serveur statique (nginx ou express) pour dist/
-```
-
-Le frontend se connecte automatiquement à `ws://<hostname>:3001`,
-donc l'IHM fonctionne sur n'importe quelle IP sans modification.
-
----
-
-## Logique convoyeur
-
-| Condition                              | Moteur | Canettes |
-|----------------------------------------|--------|----------|
-| Tapis vide                             | STOP   | —        |
-| Canettes présentes, aucune en sortie   | RUN    | avancent |
-| Canette atteint 100 % (fin de course)  | STOP   | figées   |
-| Opérateur récupère la canette          | RUN    | reprennent |
-| Tapis plein (10 canettes)              | RUN    | bouton désactivé |
-
----
-
-## Dépendances
-
-| Package         | Usage                              |
-|-----------------|------------------------------------|
-| `react`         | Framework UI                       |
-| `react-dom`     | Rendu DOM                          |
-| `lucide-react`  | Icônes                             |
-| `ws`            | WebSocket server (backend Node.js) |
-| `modbus-serial` | Client Modbus TCP (backend)        |
-| `concurrently`  | Lancer Vite + Node.js en parallèle |

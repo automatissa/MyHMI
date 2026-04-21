@@ -1,2 +1,13 @@
 node_modules/
 .vscode/
+dist/
+.pio/
+*.o
+*.d
+*.a
+*.bin
+*.elf
+*.map
+CLAUDE.md 
+.claudeignore
+.claude/
